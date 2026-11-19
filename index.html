@@ -87,8 +87,9 @@
       <li>Handy auf den Boden richten und langsam hin und her bewegen, bis der weiße Ring erscheint.</li>
       <li>Ring auf eine Raumecke am Boden schieben und auf <b>Ecke setzen</b> tippen (oder irgendwo aufs Bild).</li>
       <li>Reihum alle Ecken setzen. Zurück an der ersten Ecke schließt sich der Raum von selbst (oder <b>Raum fertig</b>).</li>
-      <li>Weitere Räume im selben Durchgang aufnehmen: Sie landen dann maßstabsgetreu im selben Plan.</li>
-      <li><b>Fertig</b> oben rechts zeigt den Grundriss.</li>
+      <li>Danach fragt die App nach der Tür: <b>linke</b> und <b>rechte Türkante</b> am Boden antippen. Gibt es mehrere Türen, auf <b>Ja, noch eine Tür</b> tippen.</li>
+      <li>Dann kommt die Frage <b>Noch einen Raum messen?</b> Alle Räume eines Durchgangs landen maßstabsgetreu im selben Plan, so entsteht die ganze Etage.</li>
+      <li><b>Nein, Plan zeigen</b> (oder <b>Fertig</b> oben rechts) öffnet den Grundriss.</li>
     </ol>
     <p class="muted">Tipp: Wenn Möbel in der Ecke stehen, die Ecke am Boden davor schätzen oder die Wand entlang eine Hilfsecke setzen.</p>
   </div>
@@ -279,7 +280,7 @@ function planSVG(plan, widthPx) {
       const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
       let nx = b[1] - a[1], ny = -(b[0] - a[0]);
       const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
-      if (ccw) { nx = -nx; ny = -ny; } // nach außen zeigen lassen
+      if (ccw) { nx = -nx; ny = -ny; } // Maße innen an der Wand
       const off = fs * 0.95;
       let ang = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
       if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
@@ -290,6 +291,32 @@ function planSVG(plan, widthPx) {
     const [cx, cy] = P(centroid(r.pts));
     g += `<text x="${cx}" y="${cy - fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="#1f2933">${esc(r.name)}</text>`;
     g += `<text x="${cx}" y="${cy + fs * 0.85}" text-anchor="middle" font-size="${fs * 0.8}" fill="#4b5563">${fmtA(Math.abs(signedArea(r.pts)))}</text>`;
+  });
+  // Türen: Öffnung in der Wand + Aufschlagbogen (bei doppelt gemessener Tür nur einmal)
+  const seen = [];
+  rooms.forEach((r, ri) => {
+    const pts = r.pts.map(P), n = pts.length;
+    const ccw = signedArea(pts) > 0;
+    for (const d of r.doors || []) {
+      if (d.wall >= n) continue;
+      const p = pts[d.wall], q = pts[(d.wall + 1) % n];
+      const at = (t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+      const H = at(d.t0), E = at(d.t1);
+      const rad = Math.hypot(E[0] - H[0], E[1] - H[1]);
+      if (rad < 1) continue;
+      let nx = q[1] - p[1], ny = -(q[0] - p[0]);
+      const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+      if (ccw) { nx = -nx; ny = -ny; } // in den Raum hinein
+      g += `<path d="M${H[0]} ${H[1]}L${E[0]} ${E[1]}" stroke="${fills[ri % fills.length]}" stroke-width="${fs * 0.42}"/>`;
+      for (const J of [H, E]) g += `<path d="M${J[0] - nx * fs * 0.25} ${J[1] - ny * fs * 0.25}l${nx * fs * 0.5} ${ny * fs * 0.5}" stroke="#1f2933" stroke-width="${fs * 0.15}"/>`;
+      if (seen.some(e => isSameDoor(d, e))) continue;
+      seen.push(d);
+      const L = [H[0] + nx * rad, H[1] + ny * rad];
+      const cross = (L[0] - H[0]) * (E[1] - H[1]) - (L[1] - H[1]) * (E[0] - H[0]);
+      g += `<path d="M${H[0]} ${H[1]}L${L[0]} ${L[1]}A${rad} ${rad} 0 0 ${cross > 0 ? 1 : 0} ${E[0]} ${E[1]}" fill="none" stroke="#c2410c" stroke-width="${fs * 0.1}" stroke-dasharray="${fs * 0.3} ${fs * 0.15}"/>`;
+      const mx = (H[0] + E[0]) / 2 + nx * rad * 0.35, my = (H[1] + E[1]) / 2 + ny * rad * 0.35;
+      g += `<text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="middle" font-size="${fs * 0.6}" fill="#c2410c">${fmtM(d.w)}</text>`;
+    }
   });
   // Maßstabsbalken 1 m
   const sx = x0 + pad * 0.5, sy = y0 + H - fs * 1.2;
@@ -344,7 +371,8 @@ function renderPlan() {
     inp.onchange = () => { current.rooms[i].name = inp.value.trim() || `Raum ${i + 1}`; upsertPlan(current); renderPlan(); };
     const info = document.createElement('span');
     info.className = 'muted'; info.style.whiteSpace = 'nowrap';
-    info.textContent = fmtA(Math.abs(signedArea(r.pts)));
+    const nd = (r.doors || []).length;
+    info.textContent = fmtA(Math.abs(signedArea(r.pts))) + ` · ${nd} ${nd === 1 ? 'Tür' : 'Türen'}`;
     const del = document.createElement('button');
     del.className = 'danger'; del.textContent = '✕'; del.setAttribute('aria-label', 'Raum löschen');
     del.onclick = () => {
@@ -389,10 +417,38 @@ $('pngBtn').onclick = () => {
   img.src = url;
 };
 
+// ---------- Türen ----------
+// Tür = zwei Kantenpunkte am Boden; wird der nächstliegenden Wand zugeordnet.
+// Gespeichert: {wall, t0, t1, w, mid}  (t0 = Scharnierseite, relativ 0..1 auf der Wand)
+function attachDoor(pts, a, b) {
+  const n = pts.length;
+  const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const proj = (p, q, x) => {
+    const dx = q[0] - p[0], dy = q[1] - p[1], l2 = dx * dx + dy * dy || 1e-9;
+    return Math.min(1, Math.max(0, ((x[0] - p[0]) * dx + (x[1] - p[1]) * dy) / l2));
+  };
+  let best = null;
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = pts[(i + 1) % n];
+    const t = proj(p, q, mid);
+    const d = Math.hypot(p[0] + (q[0] - p[0]) * t - mid[0], p[1] + (q[1] - p[1]) * t - mid[1]);
+    if (!best || d < best.d) best = { d, i };
+  }
+  const p = pts[best.i], q = pts[(best.i + 1) % n];
+  return { wall: best.i, t0: proj(p, q, a), t1: proj(p, q, b), w: +edgeLen(a, b).toFixed(3), mid: mid.map(v => +v.toFixed(4)) };
+}
+// Dieselbe Tür von der anderen Seite gemessen? (dann nur einmal mit Aufschlag zeichnen)
+function isSameDoor(d, e) {
+  return Math.hypot(d.mid[0] - e.mid[0], d.mid[1] - e.mid[1]) < 0.6 && Math.abs(d.w - e.w) < 0.25;
+}
+
 // ---------- AR-Scan ----------
 let renderer, scene, camera, session, hitSource, reticle, liveSeg;
-let rooms = [];          // abgeschlossene Räume: [{name, pts:[Vector3]}]
+let rooms = [];          // abgeschlossene Räume: [{name, pts:[Vector3], doors:[[Vector3,Vector3]]}]
 let cur = [];            // Ecken des aktuellen Raums
+// Ablauf: 'corner' Ecken → 'door' Türkanten → 'askDoor' noch eine Tür? → 'askRoom' noch ein Raum?
+let mode = 'corner';
+let doorPt = null;       // erste Türkante, solange die zweite fehlt
 let curGroup, doneGroup;
 let hit = null;          // aktuelle Trefferposition (Vector3) oder null
 let nearFirst = false;
@@ -417,63 +473,116 @@ function dot(color, r = 0.025) {
 function clearGroup(gr) {
   for (const o of [...gr.children]) { gr.remove(o); o.geometry?.dispose(); o.material?.dispose(); }
 }
+const DOOR_COLOR = 0xf97316;
 function rebuildCurrent() {
   clearGroup(curGroup);
   cur.forEach((p, i) => {
     const d = dot(i === 0 ? 0x22c55e : 0xffffff); d.position.copy(p); curGroup.add(d);
     if (i > 0) { const s = segment(0xffffff); placeSegment(s, cur[i - 1], p); curGroup.add(s); }
   });
+  if (doorPt) { const d = dot(DOOR_COLOR); d.position.copy(doorPt); curGroup.add(d); }
 }
-function addDoneRoom(r) {
-  const n = r.pts.length;
-  r.pts.forEach((p, i) => {
-    const d = dot(0x60a5fa, 0.018); d.position.copy(p); doneGroup.add(d);
-    const s = segment(0x60a5fa, 0.006); placeSegment(s, p, r.pts[(i + 1) % n]); doneGroup.add(s);
-  });
+function rebuildDone() {
+  clearGroup(doneGroup);
+  for (const r of rooms) {
+    const n = r.pts.length;
+    r.pts.forEach((p, i) => {
+      const d = dot(0x60a5fa, 0.018); d.position.copy(p); doneGroup.add(d);
+      const s = segment(0x60a5fa, 0.006); placeSegment(s, p, r.pts[(i + 1) % n]); doneGroup.add(s);
+    });
+    for (const [a, b] of r.doors) {
+      for (const p of [a, b]) { const d = dot(DOOR_COLOR, 0.022); d.position.copy(p); doneGroup.add(d); }
+      const s = segment(DOOR_COLOR, 0.014); placeSegment(s, a, b); doneGroup.add(s);
+    }
+  }
 }
 
+function setButtons(undoTxt, mainTxt, sideTxt) {
+  $('arUndo').textContent = undoTxt; $('arAdd').textContent = mainTxt; $('arClose').textContent = sideTxt;
+}
 function updateUI() {
-  const name = `Raum ${rooms.length + 1}`;
-  $('arInfo').textContent = `${name} · ${cur.length} Ecke(n)` + (rooms.length ? ` · ${rooms.length} Raum/Räume fertig` : '');
-  $('arUndo').disabled = cur.length === 0 && rooms.length === 0;
-  $('arClose').disabled = cur.length < 3;
-  $('arAdd').textContent = nearFirst ? 'Raum schließen' : 'Ecke setzen';
+  const last = rooms[rooms.length - 1];
+  const asking = mode === 'askDoor' || mode === 'askRoom';
+  $('arUndo').disabled = mode === 'corner' && cur.length === 0 && rooms.length === 0;
+  $('arAdd').disabled = !asking && !hit;
+  $('arClose').disabled = mode === 'corner' && cur.length < 3;
+  if (mode === 'corner') {
+    $('arInfo').textContent = `Raum ${rooms.length + 1} · ${cur.length} Ecke(n)` + (rooms.length ? ` · ${rooms.length} Raum/Räume fertig` : '');
+    setButtons('Rückgängig', nearFirst ? 'Raum schließen' : 'Ecke setzen', 'Raum fertig');
+  } else if (mode === 'door') {
+    $('arInfo').textContent = `${last.name} · Tür ${last.doors.length + 1}`;
+    setButtons('Rückgängig', doorPt ? 'Rechte Kante' : 'Linke Kante', last.doors.length ? 'Fertig mit Türen' : 'Keine Tür');
+  } else if (mode === 'askDoor') {
+    $('arInfo').textContent = `${last.name} · ${last.doors.length} Tür(en) · letzte ${fmtM(edgeLen(...last.doors.at(-1).map(v => [v.x, v.z])))}`;
+    setButtons('Rückgängig', 'Ja, noch eine Tür', 'Nein');
+  } else {
+    $('arInfo').textContent = `${rooms.length} Raum/Räume gemessen`;
+    setButtons('Rückgängig', 'Ja, nächster Raum', 'Nein, Plan zeigen');
+  }
+}
+function setStatus(text) { $('arStatus').textContent = text; }
+function statusText() {
+  if (mode === 'askDoor') return 'Gibt es noch eine Tür in diesem Raum?';
+  if (mode === 'askRoom') return 'Soll noch ein Raum gemessen werden?';
+  if (!hit) return 'Boden suchen… Handy langsam bewegen';
+  if (mode === 'door') return doorPt ? 'Rechte Türkante am Boden antippen' : 'Linke Türkante am Boden antippen (Scharnierseite)';
+  if (nearFirst) return 'An der ersten Ecke: tippen schließt den Raum';
+  return cur.length ? 'Nächste Ecke anpeilen' : 'Ring auf die erste Ecke am Boden setzen';
 }
 
-function addCorner() {
+// Hauptknopf / Tippen ins Bild
+function primary() {
+  if (mode === 'askDoor') { mode = 'door'; updateUI(); return; }
+  if (mode === 'askRoom') { mode = 'corner'; updateUI(); return; }
   if (!hit) return;
+  if (mode === 'door') { addDoorEdge(); return; }
   if (nearFirst && cur.length >= 3) { closeRoom(); return; }
   cur.push(hit.clone());
   rebuildCurrent(); updateUI();
   navigator.vibrate?.(30);
 }
+// rechter Knopf
+function secondary() {
+  if (mode === 'corner') closeRoom();
+  else if (mode === 'door' || mode === 'askDoor') { doorPt = null; rebuildCurrent(); mode = 'askRoom'; updateUI(); }
+  else if (mode === 'askRoom') session?.end();
+}
+function addDoorEdge() {
+  if (!doorPt) { doorPt = hit.clone(); rebuildCurrent(); navigator.vibrate?.(30); updateUI(); return; }
+  if (Math.hypot(hit.x - doorPt.x, hit.z - doorPt.z) < 0.3) { setStatus('Zu schmal – rechte Türkante weiter weg antippen'); return; }
+  rooms[rooms.length - 1].doors.push([doorPt, hit.clone()]);
+  doorPt = null; rebuildCurrent(); rebuildDone();
+  mode = 'askDoor'; navigator.vibrate?.([40, 60, 40]); updateUI();
+}
 function closeRoom() {
   if (cur.length < 3) return;
-  const r = { name: `Raum ${rooms.length + 1}`, pts: cur };
-  rooms.push(r); addDoneRoom(r);
-  cur = []; rebuildCurrent(); updateUI();
-  navigator.vibrate?.([40, 60, 40]);
+  rooms.push({ name: `Raum ${rooms.length + 1}`, pts: cur, doors: [] });
+  cur = []; rebuildCurrent(); rebuildDone();
+  mode = 'door'; navigator.vibrate?.([40, 60, 40]); updateUI();
 }
 function undo() {
-  if (cur.length) { cur.pop(); }
-  else if (rooms.length) {
-    cur = rooms.pop().pts;
-    clearGroup(doneGroup); rooms.forEach(addDoneRoom);
-  }
-  rebuildCurrent(); updateUI();
+  const last = rooms[rooms.length - 1];
+  if (mode === 'corner' && cur.length) cur.pop();
+  else if (mode === 'corner' && last) mode = last.doors.length ? 'askDoor' : 'door';
+  else if (mode === 'askRoom') mode = last.doors.length ? 'askDoor' : 'door';
+  else if (mode === 'askDoor') { last.doors.pop(); mode = 'door'; }
+  else if (mode === 'door' && doorPt) doorPt = null;
+  else if (mode === 'door' && last.doors.length) { last.doors.pop(); }
+  else if (mode === 'door') { cur = rooms.pop().pts; mode = 'corner'; } // Raum wieder öffnen
+  rebuildCurrent(); rebuildDone(); updateUI();
 }
 
 for (const id of ['arUndo', 'arAdd', 'arClose', 'arExit']) {
-  // Tippen auf Knöpfe soll keinen AR-"select" (= Ecke setzen) auslösen
+  // Tippen auf Knöpfe soll keinen AR-"select" (= Punkt setzen) auslösen
   $(id).addEventListener('beforexrselect', (e) => e.preventDefault());
 }
-$('arAdd').onclick = addCorner;
+$('arAdd').onclick = primary;
 $('arUndo').onclick = undo;
-$('arClose').onclick = closeRoom;
+$('arClose').onclick = secondary;
 $('arExit').onclick = () => session?.end();
 
 async function startAR() {
-  rooms = []; cur = []; hit = null; nearFirst = false;
+  rooms = []; cur = []; hit = null; nearFirst = false; mode = 'corner'; doorPt = null;
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -510,7 +619,8 @@ async function startAR() {
   await renderer.xr.setSession(session);
   const viewer = await session.requestReferenceSpace('viewer');
   hitSource = await session.requestHitTestSource({ space: viewer });
-  session.addEventListener('select', addCorner);
+  // Tippen ins Bild setzt Punkte, beantwortet aber keine Fragen
+  session.addEventListener('select', () => { if (mode === 'corner' || mode === 'door') primary(); });
   session.addEventListener('end', onEnd);
   updateUI();
   renderer.setAnimationLoop(onFrame);
@@ -526,22 +636,23 @@ function onFrame(t, frame) {
     reticle.visible = true;
     reticle.matrix.fromArray(pose.transform.matrix);
     hit = tmpV.setFromMatrixPosition(reticle.matrix).clone();
-    nearFirst = cur.length >= 3 && Math.hypot(hit.x - cur[0].x, hit.z - cur[0].z) < CLOSE_DIST;
-    reticle.material.color.set(nearFirst ? 0x22c55e : 0xffffff);
-    if (cur.length) {
-      const last = cur[cur.length - 1];
-      placeSegment(liveSeg, last, nearFirst ? cur[0] : hit);
-      $('arLive').textContent = fmtM(Math.hypot(hit.x - last.x, hit.z - last.z));
+    nearFirst = mode === 'corner' && cur.length >= 3 && Math.hypot(hit.x - cur[0].x, hit.z - cur[0].z) < CLOSE_DIST;
+    const asking = mode === 'askDoor' || mode === 'askRoom';
+    reticle.visible = !asking;
+    reticle.material.color.set(nearFirst ? 0x22c55e : mode === 'door' ? DOOR_COLOR : 0xffffff);
+    const from = mode === 'corner' ? cur[cur.length - 1] : mode === 'door' ? doorPt : null;
+    if (from) {
+      liveSeg.material.color.set(mode === 'door' ? DOOR_COLOR : 0xfacc15);
+      placeSegment(liveSeg, from, nearFirst ? cur[0] : hit);
+      $('arLive').textContent = (mode === 'door' ? 'Tür ' : '') + fmtM(Math.hypot(hit.x - from.x, hit.z - from.z));
     } else {
       liveSeg.visible = false; $('arLive').textContent = '';
     }
-    $('arStatus').textContent = nearFirst ? 'An der ersten Ecke: tippen schließt den Raum'
-      : cur.length ? 'Nächste Ecke anpeilen' : 'Ring auf die erste Ecke am Boden setzen';
   } else {
     reticle.visible = false; liveSeg.visible = false; hit = null; nearFirst = false;
-    $('arStatus').textContent = 'Boden suchen… Handy langsam bewegen';
     $('arLive').textContent = '';
   }
+  setStatus(statusText());
   updateUI();
   renderer.render(scene, camera);
 }
@@ -553,7 +664,8 @@ function onEnd() {
   $('ar').style.display = 'none';
   renderer.domElement.remove();
   renderer.dispose();
-  if (cur.length >= 3) closeRoom();
+  if (mode === 'corner' && cur.length >= 3) closeRoom();
+  doorPt = null;
   if (!rooms.length) { renderHome(); return; }
   const now = new Date();
   const plan = {
@@ -561,7 +673,11 @@ function onEnd() {
     name: 'Plan ' + now.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
     date: now.toISOString(),
     ortho: false,
-    rooms: rooms.map(r => ({ name: r.name, pts: r.pts.map(v => [+v.x.toFixed(4), +v.z.toFixed(4)]) })),
+    rooms: rooms.map(r => {
+      const pts = r.pts.map(v => [+v.x.toFixed(4), +v.z.toFixed(4)]);
+      const doors = r.doors.map(([a, b]) => attachDoor(pts, [a.x, a.z], [b.x, b.z]));
+      return { name: r.name, pts, doors };
+    }),
   };
   upsertPlan(plan);
   openPlan(plan.id);
@@ -582,9 +698,13 @@ $('startBtn').onclick = startAR;
 renderHome();
 if (location.hash === '#demo') { // Beispielplan zum Ausprobieren der Planansicht
   upsertPlan({ id: 'demo', name: 'Beispielwohnung', date: new Date().toISOString(), ortho: false, rooms: [
-    { name: 'Wohnzimmer', pts: [[0, 0], [4.52, 0.08], [4.47, 3.93], [-0.04, 3.88]] },
-    { name: 'Küche', pts: [[4.47, 0.05], [7.1, 0.02], [7.13, 2.6], [4.49, 2.63]] },
-    { name: 'Flur', pts: [[4.49, 2.63], [7.13, 2.6], [7.11, 3.9], [4.47, 3.93]] },
+    { name: 'Wohnzimmer', pts: [[0, 0], [4.52, 0.08], [4.47, 3.93], [-0.04, 3.88]],
+      doors: [{ wall: 1, t0: 0.72, t1: 0.94, w: 0.85, mid: [4.48, 3.42] }] },
+    { name: 'Küche', pts: [[4.62, 0.05], [7.1, 0.02], [7.13, 2.5], [4.64, 2.53]],
+      doors: [{ wall: 2, t0: 0.2, t1: 0.53, w: 0.82, mid: [6.22, 2.51] }] },
+    { name: 'Flur', pts: [[4.64, 2.65], [7.13, 2.62], [7.11, 3.9], [4.62, 3.93]],
+      doors: [{ wall: 3, t0: 0.12, t1: 0.78, w: 0.85, mid: [4.63, 3.42] },
+              { wall: 0, t0: 0.47, t1: 0.8, w: 0.82, mid: [6.22, 2.63] }] },
   ] });
   openPlan('demo');
 }
