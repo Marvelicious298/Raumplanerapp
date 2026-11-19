@@ -7,6 +7,9 @@
 <meta name="theme-color" content="#1f2933">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Raumplan">
 <style>
   :root {
     --bg: #f4f5f7; --card: #ffffff; --text: #1f2933; --muted: #616e7c;
@@ -66,6 +69,24 @@
   #ar .cross::before, #ar .cross::after { content: ""; position: absolute; background: rgba(255,255,255,.8); }
   #ar .cross::before { left: 11px; top: 0; width: 2px; height: 24px; }
   #ar .cross::after { top: 11px; left: 0; height: 2px; width: 24px; }
+  #ar .pick { position: absolute; left: 16px; right: 16px; top: 50%; transform: translateY(-50%);
+    max-height: 55vh; overflow-y: auto; pointer-events: auto; background: rgba(15,20,25,.88);
+    border: 1px solid rgba(255,255,255,.3); border-radius: 14px; padding: 14px; }
+  #ar .pickTitle { font-weight: 700; margin-bottom: 10px; }
+  #ar .pick button { display: block; width: 100%; text-align: left; margin-top: 8px; padding: 12px;
+    background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(255,255,255,.35); }
+  #ar .pick button.near { border-color: #f97316; background: rgba(249,115,22,.25); }
+  .planbox { background: #fff; border-radius: 12px; border: 1px solid var(--line); overflow: hidden; }
+  .planbox svg { display: block; width: 100%; height: auto; }
+  h3 { font-size: 1rem; margin: 18px 0 6px; }
+  .wrow { display: grid; grid-template-columns: auto 1fr auto auto; gap: 6px; align-items: center; margin-top: 6px; }
+  .drow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .drow label, .lrow label { font-size: .85rem; color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
+  select { font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); width: 100%; }
+  .num { width: 90px !important; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chips button { padding: 6px 12px; }
+  .chips button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -77,21 +98,32 @@
 
   <div id="noAr" class="card warn hidden" style="margin-top:12px"></div>
 
-  <div style="margin-top:16px">
-    <button id="startBtn" class="primary big">Räume scannen</button>
+  <div style="margin-top:16px" class="list">
+    <button id="startBtn" class="primary big">Räume scannen (Kamera)</button>
+    <button id="manualBtn" class="big">Manuell eingeben (Maße tippen)</button>
   </div>
 
-  <h2>So geht's</h2>
+  <h2>So geht's mit der Kamera</h2>
   <div class="card">
     <ol>
       <li>Handy auf den Boden richten und langsam hin und her bewegen, bis der weiße Ring erscheint.</li>
       <li>Ring auf eine Raumecke am Boden schieben und auf <b>Ecke setzen</b> tippen (oder irgendwo aufs Bild).</li>
       <li>Reihum alle Ecken setzen. Zurück an der ersten Ecke schließt sich der Raum von selbst (oder <b>Raum fertig</b>).</li>
       <li>Danach fragt die App nach der Tür: <b>linke</b> und <b>rechte Türkante</b> am Boden antippen. Gibt es mehrere Türen, auf <b>Ja, noch eine Tür</b> tippen.</li>
-      <li>Dann kommt die Frage <b>Noch einen Raum messen?</b> Alle Räume eines Durchgangs landen maßstabsgetreu im selben Plan, so entsteht die ganze Etage.</li>
+      <li>Dann kommt die Frage <b>Noch einen Raum messen?</b> Bei Ja wählst du die Tür, durch die du in den nächsten Raum gehst. Sie wird dem neuen Raum automatisch zugeordnet.</li>
+      <li>Alle Räume eines Durchgangs landen maßstabsgetreu im selben Plan, so entsteht die ganze Etage.</li>
       <li><b>Nein, Plan zeigen</b> (oder <b>Fertig</b> oben rechts) öffnet den Grundriss.</li>
     </ol>
     <p class="muted">Tipp: Wenn Möbel in der Ecke stehen, die Ecke am Boden davor schätzen oder die Wand entlang eine Hilfsecke setzen.</p>
+  </div>
+
+  <h2>So geht's manuell (auch iPhone)</h2>
+  <div class="card">
+    <ol>
+      <li>Wände reihum mit Zollstock, Laser oder der iPhone-App <b>Maßband</b> messen und eintragen, jeweils mit der Richtung an der Ecke (meist <b>rechts</b>). Die letzte Wand schließt sich automatisch. Bei einem Rechteck reicht <b>Länge × Breite</b>.</li>
+      <li>Türen eintragen: Wand, Abstand vom Wandanfang, Breite.</li>
+      <li><b>+ Raum</b> und die Tür wählen, durch die man hineinkommt. Der Raum wird dort angehängt.</li>
+    </ol>
   </div>
 
   <h2>Gespeicherte Pläne</h2>
@@ -111,8 +143,9 @@
   <div style="margin-top:12px">
     <input id="planName" type="text" aria-label="Name des Plans">
   </div>
-  <div style="margin-top:10px">
-    <label class="toggle"><input id="orthoChk" type="checkbox"> Winkel begradigen (90°)</label>
+  <div style="margin-top:10px" class="row">
+    <label class="toggle" id="orthoWrap"><input id="orthoChk" type="checkbox"> Winkel begradigen (90°)</label>
+    <button id="editBtn" class="hidden">Maße bearbeiten</button>
   </div>
   <div id="planBox" style="margin-top:12px"></div>
   <h2>Räume</h2>
@@ -120,6 +153,18 @@
   <div style="margin-top:20px">
     <button id="delPlanBtn" class="danger">Plan löschen</button>
   </div>
+</div>
+
+<!-- Manueller Editor -->
+<div id="editor" class="screen hidden">
+  <div class="row" style="justify-content:space-between">
+    <button id="edBack">‹ Zurück</button>
+    <button id="edShow" class="primary">Plan anzeigen</button>
+  </div>
+  <div style="margin-top:12px"><input id="edName" type="text" aria-label="Name des Plans"></div>
+  <div id="edPreview" class="planbox" style="margin-top:12px"></div>
+  <div class="chips" id="edRooms" style="margin-top:12px"></div>
+  <div id="edRoom" class="card" style="margin-top:12px"></div>
 </div>
 
 <!-- AR-Overlay -->
@@ -130,6 +175,10 @@
     <div id="arInfo"></div>
   </div>
   <div class="cross"></div>
+  <div class="pick hidden" id="arPick">
+    <div class="pickTitle">Durch welche Tür gehst du in den nächsten Raum?</div>
+    <div id="arPickList"></div>
+  </div>
   <button class="exit" id="arExit">Fertig</button>
   <div class="bottom">
     <button id="arUndo">Rückgängig</button>
@@ -229,7 +278,7 @@ function displayRooms(plan) {
   let rooms = plan.rooms.map(r => ({ ...r, pts: r.pts.map(p => [p[0], p[1]]) }));
   const first = rooms[0];
   let ang = 0, best = -1;
-  if (first) {
+  if (first && !plan.manual) { // manuelle Pläne bleiben so, wie sie eingegeben wurden
     for (let i = 0; i < first.pts.length; i++) {
       const a = first.pts[i], b = first.pts[(i + 1) % first.pts.length];
       const l = edgeLen(a, b);
@@ -243,8 +292,8 @@ function displayRooms(plan) {
 }
 
 // ---------- SVG-Grundriss ----------
-function planSVG(plan, widthPx) {
-  const rooms = displayRooms(plan);
+function planSVG(plan, widthPx, opts = {}) {
+  const rooms = displayRooms(plan).filter(r => r.pts.length >= 3);
   const all = rooms.flatMap(r => r.pts);
   if (!all.length) return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40"><text x="50" y="24" text-anchor="middle" font-size="8">Leer</text></svg>';
   const S = 100; // Einheiten pro Meter (cm)
@@ -285,7 +334,7 @@ function planSVG(plan, widthPx) {
       let ang = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
       if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
       const tx = mx + nx * off, ty = my + ny * off;
-      g += `<text x="${tx}" y="${ty}" transform="rotate(${ang} ${tx} ${ty})" text-anchor="middle" dominant-baseline="middle" font-size="${fs * 0.8}" fill="#374151">${fmtM(len)}</text>`;
+      g += `<text x="${tx}" y="${ty}" transform="rotate(${ang} ${tx} ${ty})" text-anchor="middle" dominant-baseline="middle" font-size="${fs * 0.8}" fill="#374151">${opts.wallNums ? 'W' + (i + 1) + ' · ' : ''}${fmtM(len)}</text>`;
     }
     for (const p of pts) g += `<circle cx="${p[0]}" cy="${p[1]}" r="${fs * 0.28}" fill="#1f2933"/>`;
     const [cx, cy] = P(centroid(r.pts));
@@ -356,6 +405,8 @@ function openPlan(id) {
   $('planView').classList.remove('hidden');
   $('planName').value = current.name;
   $('orthoChk').checked = !!current.ortho;
+  $('orthoWrap').classList.toggle('hidden', !!current.manual);
+  $('editBtn').classList.toggle('hidden', !current.manual);
   renderPlan();
   window.scrollTo(0, 0);
 }
@@ -368,7 +419,11 @@ function renderPlan() {
     el.className = 'card item';
     const inp = document.createElement('input');
     inp.type = 'text'; inp.value = r.name; inp.setAttribute('aria-label', 'Raumname');
-    inp.onchange = () => { current.rooms[i].name = inp.value.trim() || `Raum ${i + 1}`; upsertPlan(current); renderPlan(); };
+    inp.onchange = () => {
+      current.rooms[i].name = inp.value.trim() || `Raum ${i + 1}`;
+      if (current.manual) current.src[i].name = current.rooms[i].name;
+      upsertPlan(current); renderPlan();
+    };
     const info = document.createElement('span');
     info.className = 'muted'; info.style.whiteSpace = 'nowrap';
     const nd = (r.doors || []).length;
@@ -377,7 +432,9 @@ function renderPlan() {
     del.className = 'danger'; del.textContent = '✕'; del.setAttribute('aria-label', 'Raum löschen');
     del.onclick = () => {
       if (!confirm(`„${r.name}“ löschen?`)) return;
-      current.rooms.splice(i, 1); upsertPlan(current); renderPlan();
+      if (current.manual) { current.src.splice(i, 1); current.rooms = computeManual(current); }
+      else current.rooms.splice(i, 1);
+      upsertPlan(current); renderPlan();
     };
     const wrap = document.createElement('div'); wrap.className = 'grow'; wrap.appendChild(inp);
     el.append(wrap, info, del);
@@ -449,6 +506,8 @@ let cur = [];            // Ecken des aktuellen Raums
 // Ablauf: 'corner' Ecken → 'door' Türkanten → 'askDoor' noch eine Tür? → 'askRoom' noch ein Raum?
 let mode = 'corner';
 let doorPt = null;       // erste Türkante, solange die zweite fehlt
+let via = null;          // gewählte Tür {room, door}, durch die der nächste Raum betreten wird
+let camPos = null;       // aktuelle Kameraposition (für "nächste Tür")
 let curGroup, doneGroup;
 let hit = null;          // aktuelle Trefferposition (Vector3) oder null
 let nearFirst = false;
@@ -502,12 +561,17 @@ function setButtons(undoTxt, mainTxt, sideTxt) {
 }
 function updateUI() {
   const last = rooms[rooms.length - 1];
-  const asking = mode === 'askDoor' || mode === 'askRoom';
+  const asking = mode === 'askDoor' || mode === 'askRoom' || mode === 'pickDoor';
+  $('arPick').classList.toggle('hidden', mode !== 'pickDoor');
   $('arUndo').disabled = mode === 'corner' && cur.length === 0 && rooms.length === 0;
   $('arAdd').disabled = !asking && !hit;
   $('arClose').disabled = mode === 'corner' && cur.length < 3;
-  if (mode === 'corner') {
-    $('arInfo').textContent = `Raum ${rooms.length + 1} · ${cur.length} Ecke(n)` + (rooms.length ? ` · ${rooms.length} Raum/Räume fertig` : '');
+  if (mode === 'pickDoor') {
+    $('arInfo').textContent = `${rooms.length} Raum/Räume gemessen`;
+    setButtons('Rückgängig', 'Ohne Tür weiter', 'Plan zeigen');
+  } else if (mode === 'corner') {
+    $('arInfo').textContent = `Raum ${rooms.length + 1} · ${cur.length} Ecke(n)` + (rooms.length ? ` · ${rooms.length} Raum/Räume fertig` : '')
+      + (via ? ` · über Tür von ${rooms[via.room].name}` : '');
     setButtons('Rückgängig', nearFirst ? 'Raum schließen' : 'Ecke setzen', 'Raum fertig');
   } else if (mode === 'door') {
     $('arInfo').textContent = `${last.name} · Tür ${last.doors.length + 1}`;
@@ -524,6 +588,7 @@ function setStatus(text) { $('arStatus').textContent = text; }
 function statusText() {
   if (mode === 'askDoor') return 'Gibt es noch eine Tür in diesem Raum?';
   if (mode === 'askRoom') return 'Soll noch ein Raum gemessen werden?';
+  if (mode === 'pickDoor') return 'Tür wählen';
   if (!hit) return 'Boden suchen… Handy langsam bewegen';
   if (mode === 'door') return doorPt ? 'Rechte Türkante am Boden antippen' : 'Linke Türkante am Boden antippen (Scharnierseite)';
   if (nearFirst) return 'An der ersten Ecke: tippen schließt den Raum';
@@ -533,7 +598,12 @@ function statusText() {
 // Hauptknopf / Tippen ins Bild
 function primary() {
   if (mode === 'askDoor') { mode = 'door'; updateUI(); return; }
-  if (mode === 'askRoom') { mode = 'corner'; updateUI(); return; }
+  if (mode === 'askRoom') {
+    via = null;
+    if (rooms.some(r => r.doors.length)) { mode = 'pickDoor'; showDoorPicker(); } else mode = 'corner';
+    updateUI(); return;
+  }
+  if (mode === 'pickDoor') { via = null; mode = 'corner'; updateUI(); return; } // ohne Tür weiter
   if (!hit) return;
   if (mode === 'door') { addDoorEdge(); return; }
   if (nearFirst && cur.length >= 3) { closeRoom(); return; }
@@ -545,7 +615,26 @@ function primary() {
 function secondary() {
   if (mode === 'corner') closeRoom();
   else if (mode === 'door' || mode === 'askDoor') { doorPt = null; rebuildCurrent(); mode = 'askRoom'; updateUI(); }
-  else if (mode === 'askRoom') session?.end();
+  else if (mode === 'askRoom' || mode === 'pickDoor') session?.end();
+}
+// Liste aller gemessenen Türen; die der Kamera nächste steht oben
+function showDoorPicker() {
+  const list = [];
+  rooms.forEach((r, ri) => r.doors.forEach(([a, b], di) => {
+    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+    const dist = camPos ? Math.hypot(camPos.x - mx, camPos.z - mz) : 0;
+    list.push({ ri, di, dist, w: Math.hypot(b.x - a.x, b.z - a.z) });
+  }));
+  list.sort((p, q) => p.dist - q.dist);
+  const box = $('arPickList');
+  box.innerHTML = '';
+  list.forEach((d, k) => {
+    const btn = document.createElement('button');
+    if (k === 0 && camPos) btn.className = 'near';
+    btn.textContent = `${rooms[d.ri].name} – Tür ${d.di + 1} (${fmtM(d.w)})` + (k === 0 && camPos ? ' · am nächsten' : '');
+    btn.onclick = () => { via = { room: d.ri, door: d.di }; mode = 'corner'; navigator.vibrate?.(30); updateUI(); };
+    box.appendChild(btn);
+  });
 }
 function addDoorEdge() {
   if (!doorPt) { doorPt = hit.clone(); rebuildCurrent(); navigator.vibrate?.(30); updateUI(); return; }
@@ -556,23 +645,29 @@ function addDoorEdge() {
 }
 function closeRoom() {
   if (cur.length < 3) return;
-  rooms.push({ name: `Raum ${rooms.length + 1}`, pts: cur, doors: [] });
+  const room = { name: `Raum ${rooms.length + 1}`, pts: cur, doors: [], via };
+  // Die gewählte Durchgangstür gehört automatisch auch zum neuen Raum
+  if (via) room.doors.push(rooms[via.room].doors[via.door].map(v => v.clone()));
+  rooms.push(room);
+  via = null;
   cur = []; rebuildCurrent(); rebuildDone();
-  mode = 'door'; navigator.vibrate?.([40, 60, 40]); updateUI();
+  mode = room.doors.length ? 'askDoor' : 'door';
+  navigator.vibrate?.([40, 60, 40]); updateUI();
 }
 function undo() {
   const last = rooms[rooms.length - 1];
   if (mode === 'corner' && cur.length) cur.pop();
-  else if (mode === 'corner' && last) mode = last.doors.length ? 'askDoor' : 'door';
+  else if (mode === 'corner' && last) { mode = 'askRoom'; via = null; }
+  else if (mode === 'pickDoor') mode = 'askRoom';
   else if (mode === 'askRoom') mode = last.doors.length ? 'askDoor' : 'door';
   else if (mode === 'askDoor') { last.doors.pop(); mode = 'door'; }
   else if (mode === 'door' && doorPt) doorPt = null;
   else if (mode === 'door' && last.doors.length) { last.doors.pop(); }
-  else if (mode === 'door') { cur = rooms.pop().pts; mode = 'corner'; } // Raum wieder öffnen
+  else if (mode === 'door') { const r = rooms.pop(); cur = r.pts; via = r.via || null; mode = 'corner'; } // Raum wieder öffnen
   rebuildCurrent(); rebuildDone(); updateUI();
 }
 
-for (const id of ['arUndo', 'arAdd', 'arClose', 'arExit']) {
+for (const id of ['arUndo', 'arAdd', 'arClose', 'arExit', 'arPick']) {
   // Tippen auf Knöpfe soll keinen AR-"select" (= Punkt setzen) auslösen
   $(id).addEventListener('beforexrselect', (e) => e.preventDefault());
 }
@@ -582,7 +677,7 @@ $('arClose').onclick = secondary;
 $('arExit').onclick = () => session?.end();
 
 async function startAR() {
-  rooms = []; cur = []; hit = null; nearFirst = false; mode = 'corner'; doorPt = null;
+  rooms = []; cur = []; hit = null; nearFirst = false; mode = 'corner'; doorPt = null; via = null; camPos = null;
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -630,6 +725,8 @@ const tmpV = new THREE.Vector3();
 function onFrame(t, frame) {
   if (!frame) return;
   const ref = renderer.xr.getReferenceSpace();
+  const vp = frame.getViewerPose(ref);
+  if (vp) camPos = vp.transform.position;
   const results = hitSource ? frame.getHitTestResults(hitSource) : [];
   if (results.length) {
     const pose = results[0].getPose(ref);
@@ -637,8 +734,7 @@ function onFrame(t, frame) {
     reticle.matrix.fromArray(pose.transform.matrix);
     hit = tmpV.setFromMatrixPosition(reticle.matrix).clone();
     nearFirst = mode === 'corner' && cur.length >= 3 && Math.hypot(hit.x - cur[0].x, hit.z - cur[0].z) < CLOSE_DIST;
-    const asking = mode === 'askDoor' || mode === 'askRoom';
-    reticle.visible = !asking;
+    reticle.visible = mode === 'corner' || mode === 'door';
     reticle.material.color.set(nearFirst ? 0x22c55e : mode === 'door' ? DOOR_COLOR : 0xffffff);
     const from = mode === 'corner' ? cur[cur.length - 1] : mode === 'door' ? doorPt : null;
     if (from) {
@@ -676,23 +772,225 @@ function onEnd() {
     rooms: rooms.map(r => {
       const pts = r.pts.map(v => [+v.x.toFixed(4), +v.z.toFixed(4)]);
       const doors = r.doors.map(([a, b]) => attachDoor(pts, [a.x, a.z], [b.x, b.z]));
-      return { name: r.name, pts, doors };
+      return { name: r.name, pts, doors, ...(r.via ? { via: r.via } : {}) };
     }),
   };
   upsertPlan(plan);
   openPlan(plan.id);
 }
 
+// ---------- Manueller Modus ----------
+// Quelle je Raum: {id, name, walls:[{len, turn}], doors:[{wall, from, width, hinge}], link:{door, target}}
+// Richtung startet nach rechts; turn = Drehung an der Ecke nach der Wand (+90 = rechts).
+const num = (s) => { const v = parseFloat(String(s ?? '').replace(',', '.')); return isFinite(v) ? v : NaN; };
+const uid = () => Math.random().toString(36).slice(2, 9);
+const TURNS = [[90, 'dann rechts'], [-90, 'dann links'], [0, 'geradeaus'], [45, 'rechts 45°'], [-45, 'links 45°']];
+const newSrcRoom = (k) => ({ id: uid(), name: `Raum ${k}`, walls: [0, 1, 2, 3].map(() => ({ len: '', turn: 90 })), doors: [], link: { door: '', target: '' } });
+
+function roomShape(src) {
+  const walls = src.walls.filter(w => num(w.len) > 0);
+  const pts = [[0, 0]];
+  let h = 0;
+  for (const w of walls) {
+    const p = pts[pts.length - 1], l = num(w.len), r = h * Math.PI / 180;
+    pts.push([p[0] + l * Math.cos(r), p[1] + l * Math.sin(r)]);
+    h += Number(w.turn) || 0;
+  }
+  const end = pts[pts.length - 1];
+  const gap = Math.hypot(end[0], end[1]);
+  if (pts.length > 1 && gap < 0.05) pts.pop();     // schon geschlossen
+  return { pts, entered: walls.length, closing: pts.length > walls.length ? gap : 0 };
+}
+function doorOnWall(P, d) {
+  const n = P.length;
+  const w = num(d.width), from = num(d.from) || 0;
+  if (n < 3 || !(w > 0) || d.wall === '' || +d.wall >= n) return null;
+  const p = P[+d.wall], q = P[(+d.wall + 1) % n];
+  const len = edgeLen(p, q) || 1e-9;
+  const cl = (t) => Math.min(1, Math.max(0, t));
+  const ta = cl(from / len), tb = cl((from + w) / len);
+  const [t0, t1] = d.hinge === 'end' ? [tb, ta] : [ta, tb];
+  const tm = (ta + tb) / 2;
+  return { wall: +d.wall, t0, t1, w, mid: [p[0] + (q[0] - p[0]) * tm, p[1] + (q[1] - p[1]) * tm] };
+}
+function doorFrame(P, d) { // Mitte + Normale in den Raum hinein
+  const n = P.length, p = P[d.wall], q = P[(d.wall + 1) % n];
+  let nx = q[1] - p[1], ny = -(q[0] - p[0]);
+  const l = Math.hypot(nx, ny) || 1; nx /= l; ny /= l;
+  if (signedArea(P) > 0) { nx = -nx; ny = -ny; }
+  return { c: d.mid, n: [nx, ny] };
+}
+function computeManual(plan) {
+  const thick = num(plan.thick) >= 0 ? num(plan.thick) : 0.12;
+  const out = [], byId = {};
+  for (const src of plan.src) {
+    let P = roomShape(src).pts;
+    if (P.length >= 3 && out.length) {
+      const L = src.link || {};
+      const [tid, tdi] = String(L.target || '').split(':');
+      const other = byId[tid];
+      const own = L.door !== '' && L.door != null ? doorOnWall(P, src.doors[+L.door] || {}) : null;
+      const oth = other && other.srcDoors[+tdi];
+      if (own && oth) {
+        // neuen Raum drehen, sodass die Tür der anderen Tür gegenüberliegt, und durch die Wand hindurch anhängen
+        const a = doorFrame(P, own), b = doorFrame(other.pts, oth);
+        const ang = Math.atan2(-b.n[1], -b.n[0]) - Math.atan2(a.n[1], a.n[0]);
+        const c = Math.cos(ang), s = Math.sin(ang);
+        const rot = ([x, y]) => [x * c - y * s, x * s + y * c];
+        const cr = rot(a.c), tx = b.c[0] - b.n[0] * thick - cr[0], ty = b.c[1] - b.n[1] * thick - cr[1];
+        P = P.map(p => { const r = rot(p); return [r[0] + tx, r[1] + ty]; });
+      } else {
+        // nicht verbunden: rechts neben die bisherigen Räume legen
+        const all = out.flatMap(r => r.pts);
+        const maxX = Math.max(...all.map(p => p[0])), minY = Math.min(...all.map(p => p[1]));
+        const lx = Math.min(...P.map(p => p[0])), ly = Math.min(...P.map(p => p[1]));
+        P = P.map(([x, y]) => [x - lx + maxX + 1, y - ly + minY]);
+      }
+    }
+    const srcDoors = src.doors.map(d => doorOnWall(P, d));
+    const room = { name: src.name, pts: P, doors: srcDoors.filter(Boolean), srcDoors };
+    out.push(room); byId[src.id] = room;
+  }
+  return out.map(({ srcDoors, ...r }) => r);
+}
+
+let ed = null, edIdx = 0;
+function newManualPlan() {
+  const now = new Date();
+  ed = { id: now.getTime().toString(36) + uid().slice(0, 4), manual: true, thick: '0,12', ortho: false,
+         name: 'Plan ' + now.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+         date: now.toISOString(), src: [newSrcRoom(1)], rooms: [] };
+  edIdx = 0; openEditor();
+}
+function openEditor() {
+  for (const id of ['home', 'planView']) $(id).classList.add('hidden');
+  $('editor').classList.remove('hidden');
+  $('edName').value = ed.name;
+  renderEditor(); window.scrollTo(0, 0);
+}
+function edSave() { ed.rooms = computeManual(ed); upsertPlan(ed); }
+function edPreview() {
+  edSave();
+  $('edPreview').innerHTML = planSVG(ed, 0, { wallNums: true });
+  const sh = roomShape(ed.src[edIdx]);
+  const info = $('edClose');
+  if (info) info.textContent = sh.entered < 2 ? 'Mindestens 2 Wände eintragen.'
+    : sh.closing ? `Schlusswand W${sh.pts.length} wird automatisch ergänzt: ${fmtM(sh.closing)}` : 'Raum ist geschlossen.';
+}
+const opt = (v, label, sel) => `<option value="${esc(v)}"${String(sel) === String(v) ? ' selected' : ''}>${esc(label)}</option>`;
+function renderEditor() {
+  const r = ed.src[edIdx];
+  $('edRooms').innerHTML = ed.src.map((s, i) => `<button data-a="pick" data-i="${i}" class="${i === edIdx ? 'on' : ''}">${esc(s.name)}</button>`).join('')
+    + `<button data-a="addRoom">+ Raum</button>`;
+  const P = roomShape(r).pts, nW = P.length >= 3 ? P.length : 0;
+  const wallOpts = (sel) => opt('', 'Wand wählen', sel) + Array.from({ length: nW }, (_, i) => opt(i, `W${i + 1}`, sel)).join('');
+  let h = `<label>Name<input type="text" data-f="name" value="${esc(r.name)}"></label>
+    <h3>Rechteck schnell</h3>
+    <div class="row"><input class="num" type="text" inputmode="decimal" id="rectL" placeholder="Länge"> ×
+      <input class="num" type="text" inputmode="decimal" id="rectB" placeholder="Breite"> m
+      <button data-a="rect">Übernehmen</button></div>
+    <h3>Wände (in Metern, reihum)</h3>`;
+  r.walls.forEach((w, i) => {
+    h += `<div class="wrow"><b>W${i + 1}</b>
+      <input type="text" inputmode="decimal" data-f="wlen" data-i="${i}" value="${esc(w.len)}" placeholder="z. B. 3,45">
+      <select data-f="wturn" data-i="${i}">${TURNS.map(([v, l]) => opt(v, l, w.turn)).join('')}</select>
+      <button class="danger" data-a="delWall" data-i="${i}" aria-label="Wand löschen">✕</button></div>`;
+  });
+  h += `<div class="row" style="margin-top:8px"><button data-a="addWall">+ Wand</button></div>
+    <p class="muted" id="edClose"></p>
+    <h3>Türen</h3>`;
+  r.doors.forEach((d, i) => {
+    h += `<div class="drow"><b style="grid-column:1/-1">Tür ${i + 1}</b>
+      <label>Wand<select data-f="dwall" data-i="${i}">${wallOpts(d.wall)}</select></label>
+      <label>Abstand ab Wandanfang (m)<input type="text" inputmode="decimal" data-f="dfrom" data-i="${i}" value="${esc(d.from)}"></label>
+      <label>Breite (m)<input type="text" inputmode="decimal" data-f="dwidth" data-i="${i}" value="${esc(d.width)}"></label>
+      <label>Scharnier<select data-f="dhinge" data-i="${i}">${opt('start', 'am Wandanfang', d.hinge)}${opt('end', 'am Wandende', d.hinge)}</select></label>
+      <div style="grid-column:1/-1"><button class="danger" data-a="delDoor" data-i="${i}">Tür löschen</button></div></div>`;
+  });
+  h += `<div class="row" style="margin-top:8px"><button data-a="addDoor">+ Tür</button></div>`;
+  if (edIdx > 0) {
+    const targets = [];
+    ed.src.slice(0, edIdx).forEach(s => s.doors.forEach((d, j) => targets.push([`${s.id}:${j}`, `${s.name} – Tür ${j + 1}`])));
+    h += `<h3>Verbindung</h3><div class="drow lrow" style="border:0">
+      <label>Reinkommen durch<select data-f="ltarget">${opt('', 'nicht verbunden', r.link.target)}${targets.map(([v, l]) => opt(v, l, r.link.target)).join('')}</select></label>
+      <label>= Tür dieses Raums<select data-f="ldoor">${opt('', '–', r.link.door)}${r.doors.map((_, j) => opt(j, `Tür ${j + 1}`, r.link.door)).join('')}</select></label>
+      <label>Wandstärke (m)<input type="text" inputmode="decimal" data-f="thick" value="${esc(ed.thick)}"></label></div>`;
+    if (!targets.length) h += `<p class="muted">Erst in einem vorherigen Raum eine Tür eintragen, dann kann dieser Raum dort angehängt werden.</p>`;
+  }
+  if (ed.src.length > 1) h += `<div style="margin-top:16px"><button class="danger" data-a="delRoom">Raum löschen</button></div>`;
+  $('edRoom').innerHTML = h;
+  edPreview();
+}
+function edField(e) {
+  const t = e.target, f = t.dataset.f; if (!f) return false;
+  const r = ed.src[edIdx], i = +t.dataset.i, v = t.value;
+  if (f === 'name') r.name = v.trim() || `Raum ${edIdx + 1}`;
+  else if (f === 'wlen') r.walls[i].len = v;
+  else if (f === 'wturn') r.walls[i].turn = +v;
+  else if (f === 'dwall') r.doors[i].wall = v;
+  else if (f === 'dfrom') r.doors[i].from = v;
+  else if (f === 'dwidth') r.doors[i].width = v;
+  else if (f === 'dhinge') r.doors[i].hinge = v;
+  else if (f === 'thick') ed.thick = v;
+  else if (f === 'ltarget') {
+    r.link.target = v;
+    // passende Tür im neuen Raum gleich mit anlegen, falls noch keine gewählt
+    if (v && r.link.door === '') {
+      const [sid, j] = v.split(':');
+      const od = ed.src.find(s => s.id === sid)?.doors[+j];
+      r.doors.push({ wall: '', from: '0', width: od?.width || '0,85', hinge: 'start' });
+      r.link.door = String(r.doors.length - 1);
+    }
+  } else if (f === 'ldoor') r.link.door = v;
+  return true;
+}
+$('edRoom').addEventListener('input', (e) => { if (e.target.tagName !== 'SELECT' && edField(e)) edPreview(); });
+$('edRoom').addEventListener('change', (e) => {
+  if (e.target.tagName === 'SELECT' && edField(e)) renderEditor();
+  else if (e.target.dataset.f === 'name') { edField(e); renderEditor(); }
+});
+function edAction(e) {
+  const b = e.target.closest('button[data-a]'); if (!b) return;
+  const a = b.dataset.a, i = +b.dataset.i, r = ed.src[edIdx];
+  if (a === 'pick') edIdx = i;
+  else if (a === 'addRoom') {
+    ed.src.push(newSrcRoom(ed.src.length + 1)); edIdx = ed.src.length - 1;
+  } else if (a === 'addWall') r.walls.push({ len: '', turn: 90 });
+  else if (a === 'delWall') r.walls.splice(i, 1);
+  else if (a === 'addDoor') r.doors.push({ wall: '', from: '', width: '0,85', hinge: 'start' });
+  else if (a === 'delDoor') {
+    r.doors.splice(i, 1);
+    if (r.link.door !== '' && +r.link.door === i) r.link.door = '';
+    else if (r.link.door !== '' && +r.link.door > i) r.link.door = String(+r.link.door - 1);
+  } else if (a === 'rect') {
+    const L = $('rectL').value, B = $('rectB').value;
+    if (!(num(L) > 0 && num(B) > 0)) { alert('Bitte Länge und Breite eintragen.'); return; }
+    r.walls = [L, B, L, B].map(len => ({ len, turn: 90 }));
+  } else if (a === 'delRoom') {
+    if (!confirm(`„${r.name}“ löschen?`)) return;
+    ed.src.splice(edIdx, 1); edIdx = Math.max(0, edIdx - 1);
+  }
+  renderEditor();
+  if (a === 'addRoom') document.querySelector('[data-f="ltarget"]')?.focus();
+}
+$('edRoom').addEventListener('click', edAction);
+$('edRooms').addEventListener('click', edAction);
+$('edName').onchange = () => { ed.name = $('edName').value.trim() || 'Plan'; edSave(); };
+$('edBack').onclick = () => { $('editor').classList.add('hidden'); $('home').classList.remove('hidden'); renderHome(); };
+$('edShow').onclick = () => { edSave(); $('editor').classList.add('hidden'); openPlan(ed.id); };
+$('editBtn').onclick = () => { ed = current; edIdx = 0; openEditor(); };
+$('manualBtn').onclick = newManualPlan;
+
 // ---------- Start ----------
 async function checkSupport() {
   let msg = '';
   if (!window.isSecureContext) msg = 'Die Seite muss über https:// oder http://localhost geöffnet werden, sonst ist AR gesperrt.';
-  else if (!navigator.xr) msg = 'Dieser Browser kann kein AR (WebXR). Öffne die Seite in Chrome auf Android.';
+  else if (!navigator.xr) msg = 'Kamera-Scan geht nur in Chrome auf Android (iPhone/Safari unterstützt das nicht).';
   else {
     const ok = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-    if (!ok) msg = 'AR wird auf diesem Gerät nicht unterstützt. Prüfe, ob „Google Play-Dienste für AR“ installiert und aktuell ist.';
+    if (!ok) msg = 'Kamera-Scan geht auf diesem Gerät nicht (z. B. iPhone, oder auf Android fehlen „Google Play-Dienste für AR“).';
   }
-  if (msg) { $('noAr').textContent = msg; $('noAr').classList.remove('hidden'); $('startBtn').disabled = true; }
+  if (msg) { $('noAr').textContent = msg + ' Nutze „Manuell eingeben“.'; $('noAr').classList.remove('hidden'); $('startBtn').disabled = true; }
 }
 $('startBtn').onclick = startAR;
 renderHome();
