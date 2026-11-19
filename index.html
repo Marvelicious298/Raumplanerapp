@@ -69,13 +69,18 @@
   #ar .cross::before, #ar .cross::after { content: ""; position: absolute; background: rgba(255,255,255,.8); }
   #ar .cross::before { left: 11px; top: 0; width: 2px; height: 24px; }
   #ar .cross::after { top: 11px; left: 0; height: 2px; width: 24px; }
-  #ar .pick { position: absolute; left: 16px; right: 16px; top: 50%; transform: translateY(-50%);
-    max-height: 55vh; overflow-y: auto; pointer-events: auto; background: rgba(15,20,25,.88);
-    border: 1px solid rgba(255,255,255,.3); border-radius: 14px; padding: 14px; }
-  #ar .pickTitle { font-weight: 700; margin-bottom: 10px; }
-  #ar .pick button { display: block; width: 100%; text-align: left; margin-top: 8px; padding: 12px;
+  /* Türwahl unten, damit die Mitte des Kamerabilds (grün leuchtende Tür) frei bleibt */
+  #ar .pick { position: absolute; left: 12px; right: 12px; bottom: calc(96px + env(safe-area-inset-bottom));
+    max-height: 46vh; overflow-y: auto; pointer-events: auto; background: rgba(15,20,25,.85);
+    border: 1px solid rgba(255,255,255,.3); border-radius: 14px; padding: 12px; }
+  #ar .pickTitle { font-weight: 700; margin-bottom: 6px; }
+  #ar .pickHint { font-size: .85rem; opacity: .85; margin-bottom: 6px; }
+  #arPickPlan { background: #fff; border-radius: 8px; overflow: hidden; }
+  #arPickPlan svg { display: block; width: 100%; height: auto; max-height: 20vh; }
+  #ar .pick button { display: block; width: 100%; text-align: left; margin-top: 6px; padding: 11px;
     background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(255,255,255,.35); }
-  #ar .pick button.near { border-color: #f97316; background: rgba(249,115,22,.25); }
+  #ar .pick button.sel { border: 2px solid #22c55e; background: rgba(34,197,94,.3); }
+  #ar .pick button.skip { text-align: center; opacity: .85; }
   .planbox { background: #fff; border-radius: 12px; border: 1px solid var(--line); overflow: hidden; }
   .planbox svg { display: block; width: 100%; height: auto; }
   h3 { font-size: 1rem; margin: 18px 0 6px; }
@@ -110,9 +115,11 @@
       <li>Ring auf eine Raumecke am Boden schieben und auf <b>Ecke setzen</b> tippen (oder irgendwo aufs Bild).</li>
       <li>Reihum alle Ecken setzen. Zurück an der ersten Ecke schließt sich der Raum von selbst (oder <b>Raum fertig</b>).</li>
       <li>Danach fragt die App nach der Tür: <b>linke</b> und <b>rechte Türkante</b> am Boden antippen. Gibt es mehrere Türen, auf <b>Ja, noch eine Tür</b> tippen.</li>
-      <li>Dann kommt die Frage <b>Noch einen Raum messen?</b> Bei Ja wählst du die Tür, durch die du in den nächsten Raum gehst. Sie wird dem neuen Raum automatisch zugeordnet.</li>
+      <li>Dann kommt die Frage <b>Noch einen Raum messen?</b> Bei Ja wählst du die Tür, durch die du in den nächsten Raum gehst. Die markierte Tür leuchtet grün, mit <b>Diese Tür nehmen</b> bestätigst du sie.</li>
       <li>Alle Räume eines Durchgangs landen maßstabsgetreu im selben Plan, so entsteht die ganze Etage.</li>
       <li><b>Nein, Plan zeigen</b> (oder <b>Fertig</b> oben rechts) öffnet den Grundriss.</li>
+      <li>Pause gemacht? Plan öffnen → <b>+ Räume dazumessen</b>, die Tür wählen, an der es weitergeht, und diese Tür noch einmal antippen. Die neuen Räume landen passend im selben Plan.</li>
+      <li><b>Räume angleichen</b> in der Planansicht macht Wände rechtwinklig und legt die Räume gerade und bündig aneinander (lässt sich rückgängig machen).</li>
     </ol>
     <p class="muted">Tipp: Wenn Möbel in der Ecke stehen, die Ecke am Boden davor schätzen oder die Wand entlang eine Hilfsecke setzen.</p>
   </div>
@@ -144,9 +151,11 @@
     <input id="planName" type="text" aria-label="Name des Plans">
   </div>
   <div style="margin-top:10px" class="row">
-    <label class="toggle" id="orthoWrap"><input id="orthoChk" type="checkbox"> Winkel begradigen (90°)</label>
+    <button id="moreBtn" class="primary">+ Räume dazumessen</button>
+    <button id="alignBtn">Räume angleichen</button>
     <button id="editBtn" class="hidden">Maße bearbeiten</button>
   </div>
+  <p id="alignInfo" class="muted hidden"></p>
   <div id="planBox" style="margin-top:12px"></div>
   <h2>Räume</h2>
   <div id="roomList" class="list"></div>
@@ -176,7 +185,9 @@
   </div>
   <div class="cross"></div>
   <div class="pick hidden" id="arPick">
-    <div class="pickTitle">Durch welche Tür gehst du in den nächsten Raum?</div>
+    <div class="pickTitle" id="arPickTitle">Durch welche Tür gehst du in den nächsten Raum?</div>
+    <div class="pickHint" id="arPickHint"></div>
+    <div id="arPickPlan"></div>
     <div id="arPickList"></div>
   </div>
   <button class="exit" id="arExit">Fertig</button>
@@ -273,6 +284,137 @@ function orthogonalize(pts) {
   return out;
 }
 
+// ---------- Räume angleichen ----------
+// Hauptrichtung aller Wände modulo 90° (längengewichtet), Ergebnis in (-45°, 45°]
+function axisAngle(ptsList) {
+  let sx = 0, sy = 0;
+  for (const pts of ptsList) for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length], l = edgeLen(a, b);
+    const t = 4 * Math.atan2(b[1] - a[1], b[0] - a[0]);
+    sx += l * Math.cos(t); sy += l * Math.sin(t);
+  }
+  return Math.atan2(sy, sx) / 4;
+}
+// Fast achsparallele Wände exakt waagerecht/senkrecht machen; Schließfehler nur auf
+// Wände derselben Richtung verteilen, damit sie gerade bleiben.
+function snapAxis(pts, tol) {
+  const n = pts.length;
+  if (n < 3) return pts;
+  const E = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    let dx = b[0] - a[0], dy = b[1] - a[1];
+    const l = Math.hypot(dx, dy), ang = Math.atan2(dy, dx);
+    const k = Math.round(ang / (Math.PI / 2));
+    let diff = ang - k * Math.PI / 2; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    if (Math.abs(diff) < tol) { dx = Math.round(Math.cos(k * Math.PI / 2)) * l; dy = Math.round(Math.sin(k * Math.PI / 2)) * l; }
+    E.push([dx, dy]);
+  }
+  for (const ax of [0, 1]) {
+    const err = E.reduce((s, e) => s + e[ax], 0), wsum = E.reduce((s, e) => s + Math.abs(e[ax]), 0);
+    if (wsum > 1e-9) for (const e of E) e[ax] -= err * Math.abs(e[ax]) / wsum;
+  }
+  const out = [[pts[0][0], pts[0][1]]];
+  for (let i = 0; i < n - 1; i++) out.push([out[i][0] + E[i][0], out[i][1] + E[i][1]]);
+  const c0 = centroid(pts), c1 = centroid(out); // Schwerpunkt bleibt, statt alles an Ecke 1 aufzuhängen
+  return out.map(([x, y]) => [x + c0[0] - c1[0], y + c0[1] - c1[1]]);
+}
+function doorMid(pts, d) {
+  const p = pts[d.wall], q = pts[(d.wall + 1) % pts.length], t = (d.t0 + d.t1) / 2;
+  return [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+}
+function pointInPoly([x, y], pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+// Achsparallele Wände eines Raums: {ax (0 = Wand bei x=v, 1 = bei y=v), v, lo, hi, nrm (Innenseite ±1)}
+function axisWalls(pts) {
+  const res = [], ccw = signedArea(pts) > 0, n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    if (Math.hypot(dx, dy) < 0.2) continue;
+    if (Math.abs(dx) < 1e-6) res.push({ ax: 0, v: a[0], lo: Math.min(a[1], b[1]), hi: Math.max(a[1], b[1]), nrm: Math.sign(dy) * (ccw ? -1 : 1) });
+    else if (Math.abs(dy) < 1e-6) res.push({ ax: 1, v: a[1], lo: Math.min(a[0], b[0]), hi: Math.max(a[0], b[0]), nrm: -Math.sign(dx) * (ccw ? -1 : 1) });
+  }
+  return res;
+}
+function wMedian(c) { // gewichteter Median von [wert, gewicht]
+  c.sort((p, q) => p[0] - q[0]);
+  const half = c.reduce((s, x) => s + x[1], 0) / 2;
+  let acc = 0;
+  for (const [v, w] of c) { acc += w; if (acc >= half) return v; }
+  return 0;
+}
+const WALL_STD = [0.10, 0.12, 0.175, 0.24, 0.30, 0.365]; // übliche Wandstärken (m)
+// Ganze Etage gerade ausrichten: gemeinsame Hauptrichtung, Wände rechtwinklig,
+// Nachbarräume mit gleichmäßiger Wandstärke bündig, Fassaden auf einer Linie, Türen deckungsgleich.
+function alignRooms(rooms) {
+  const SNAP = 12 * Math.PI / 180;
+  const th = axisAngle(rooms.map(r => r.pts));
+  const c = Math.cos(-th), s = Math.sin(-th);
+  let out = rooms.map(r => {
+    let pts = r.pts.map(([x, y]) => [x * c - y * s, x * s + y * c]);
+    const d = -axisAngle([pts]);
+    if (Math.abs(d) < SNAP) {
+      const [cx, cy] = centroid(pts), c2 = Math.cos(d), s2 = Math.sin(d);
+      pts = pts.map(([x, y]) => [cx + (x - cx) * c2 - (y - cy) * s2, cy + (x - cx) * s2 + (y - cy) * c2]);
+    }
+    return { ...r, pts: snapAxis(pts, SNAP), doors: (r.doors || []).map(d => ({ ...d })) };
+  });
+  const mids = () => out.forEach(r => r.doors.forEach(d => { d.mid = doorMid(r.pts, d); }));
+  mids();
+  // Räume nacheinander verschieben, beginnend beim größten; immer den mit den meisten Bezügen zu schon platzierten
+  const placed = new Set([out.reduce((bi, r, i) => Math.abs(signedArea(r.pts)) > Math.abs(signedArea(out[bi].pts)) ? i : bi, 0)]);
+  const shiftFor = (k) => {
+    const cand = [[], []];
+    const W = axisWalls(out[k].pts);
+    for (const j of placed) {
+      for (const P of axisWalls(out[j].pts)) for (const Q of W) {
+        if (P.ax !== Q.ax) continue;
+        const ov = Math.min(P.hi, Q.hi) - Math.max(P.lo, Q.lo);
+        if (P.nrm === -Q.nrm && ov > 0.2) { // Rücken an Rücken: Zwischenwand
+          const g = (Q.v - P.v) * Q.nrm;
+          if (g > -0.3 && g < 0.45) {
+            // Wandstärke: nahe (≤ 2 cm) an einem üblichen Maß → dieses, sonst gemessen auf cm; zu dünn/überlappend → 10 cm
+            const gg = Math.max(g, 0.1);
+            const std = WALL_STD.reduce((b, t) => Math.abs(t - gg) < Math.abs(b - gg) ? t : b);
+            const want = Math.abs(std - gg) <= 0.02 ? std : Math.round(gg * 100) / 100;
+            cand[Q.ax].push([(want - g) * Q.nrm, ov]);
+          }
+        } else if (P.nrm === Q.nrm && ov < 0.1 && -ov < 0.6 && Math.abs(Q.v - P.v) < 0.15) { // gleiche Flucht
+          cand[Q.ax].push([P.v - Q.v, 0.4]);
+        }
+      }
+      for (const d of out[k].doors) for (const e of out[j].doors) { // gemeinsame Tür deckungsgleich
+        if (Math.abs(d.w - e.w) > 0.25 || Math.hypot(d.mid[0] - e.mid[0], d.mid[1] - e.mid[1]) > 0.6) continue;
+        const p = out[k].pts[d.wall], q = out[k].pts[(d.wall + 1) % out[k].pts.length];
+        const along = Math.abs(q[0] - p[0]) > Math.abs(q[1] - p[1]) ? 0 : 1;
+        cand[along].push([e.mid[along] - d.mid[along], 2]);
+      }
+    }
+    return cand;
+  };
+  while (placed.size < out.length) {
+    let best = -1, bc = null, bn = -1;
+    for (let k = 0; k < out.length; k++) {
+      if (placed.has(k)) continue;
+      const cnd = shiftFor(k), n = cnd[0].length + cnd[1].length;
+      if (n > bn) { bn = n; best = k; bc = cnd; }
+    }
+    const dx = bc[0].length ? wMedian(bc[0]) : 0, dy = bc[1].length ? wMedian(bc[1]) : 0;
+    out[best].pts = out[best].pts.map(([x, y]) => [x + dx, y + dy]);
+    out[best].doors.forEach(d => { d.mid = doorMid(out[best].pts, d); });
+    placed.add(best);
+  }
+  return out.map(r => ({ ...r, pts: r.pts.map(p => p.map(v => +v.toFixed(4))),
+    doors: r.doors.map(d => ({ ...d, mid: d.mid.map(v => +v.toFixed(4)) })) }));
+}
+
 // Plan so drehen, dass die längste Wand des ersten Raums waagerecht liegt.
 function displayRooms(plan) {
   let rooms = plan.rooms.map(r => ({ ...r, pts: r.pts.map(p => [p[0], p[1]]) }));
@@ -293,7 +435,7 @@ function displayRooms(plan) {
 
 // ---------- SVG-Grundriss ----------
 function planSVG(plan, widthPx, opts = {}) {
-  const rooms = displayRooms(plan).filter(r => r.pts.length >= 3);
+  const rooms = displayRooms(plan).map((r, i) => ({ ...r, _i: i })).filter(r => r.pts.length >= 3);
   const all = rooms.flatMap(r => r.pts);
   if (!all.length) return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40"><text x="50" y="24" text-anchor="middle" font-size="8">Leer</text></svg>';
   const S = 100; // Einheiten pro Meter (cm)
@@ -343,30 +485,35 @@ function planSVG(plan, widthPx, opts = {}) {
   });
   // Türen: Öffnung in der Wand + Aufschlagbogen (bei doppelt gemessener Tür nur einmal)
   const seen = [];
+  let hlSvg = '';
   rooms.forEach((r, ri) => {
     const pts = r.pts.map(P), n = pts.length;
     const ccw = signedArea(pts) > 0;
-    for (const d of r.doors || []) {
-      if (d.wall >= n) continue;
+    (r.doors || []).forEach((d, di) => {
+      if (d.wall >= n) return;
       const p = pts[d.wall], q = pts[(d.wall + 1) % n];
       const at = (t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
       const H = at(d.t0), E = at(d.t1);
       const rad = Math.hypot(E[0] - H[0], E[1] - H[1]);
-      if (rad < 1) continue;
+      if (rad < 1) return;
       let nx = q[1] - p[1], ny = -(q[0] - p[0]);
       const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
       if (ccw) { nx = -nx; ny = -ny; } // in den Raum hinein
       g += `<path d="M${H[0]} ${H[1]}L${E[0]} ${E[1]}" stroke="${fills[ri % fills.length]}" stroke-width="${fs * 0.42}"/>`;
       for (const J of [H, E]) g += `<path d="M${J[0] - nx * fs * 0.25} ${J[1] - ny * fs * 0.25}l${nx * fs * 0.5} ${ny * fs * 0.5}" stroke="#1f2933" stroke-width="${fs * 0.15}"/>`;
-      if (seen.some(e => isSameDoor(d, e))) continue;
+      if (opts.hl && opts.hl.room === r._i && opts.hl.door === di) // gewählte Tür grün hervorheben
+        hlSvg += `<circle cx="${(H[0] + E[0]) / 2}" cy="${(H[1] + E[1]) / 2}" r="${rad * 0.65}" fill="#22c55e" fill-opacity=".25" stroke="#16a34a" stroke-width="${fs * 0.15}"/>`
+          + `<path d="M${H[0]} ${H[1]}L${E[0]} ${E[1]}" stroke="#16a34a" stroke-width="${fs * 0.7}" stroke-linecap="round"/>`;
+      if (seen.some(e => isSameDoor(d, e))) return;
       seen.push(d);
       const L = [H[0] + nx * rad, H[1] + ny * rad];
       const cross = (L[0] - H[0]) * (E[1] - H[1]) - (L[1] - H[1]) * (E[0] - H[0]);
       g += `<path d="M${H[0]} ${H[1]}L${L[0]} ${L[1]}A${rad} ${rad} 0 0 ${cross > 0 ? 1 : 0} ${E[0]} ${E[1]}" fill="none" stroke="#c2410c" stroke-width="${fs * 0.1}" stroke-dasharray="${fs * 0.3} ${fs * 0.15}"/>`;
       const mx = (H[0] + E[0]) / 2 + nx * rad * 0.35, my = (H[1] + E[1]) / 2 + ny * rad * 0.35;
       g += `<text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="middle" font-size="${fs * 0.6}" fill="#c2410c">${fmtM(d.w)}</text>`;
-    }
+    });
   });
+  g += hlSvg;
   // Maßstabsbalken 1 m
   const sx = x0 + pad * 0.5, sy = y0 + H - fs * 1.2;
   g += `<path d="M${sx} ${sy}h${S}M${sx} ${sy - fs * 0.3}v${fs * 0.6}M${sx + S} ${sy - fs * 0.3}v${fs * 0.6}" stroke="#1f2933" stroke-width="${fs * 0.12}"/>`;
@@ -404,14 +551,17 @@ function openPlan(id) {
   $('home').classList.add('hidden');
   $('planView').classList.remove('hidden');
   $('planName').value = current.name;
-  $('orthoChk').checked = !!current.ortho;
-  $('orthoWrap').classList.toggle('hidden', !!current.manual);
+  $('moreBtn').classList.toggle('hidden', !!current.manual); // manuelle Pläne: „Maße bearbeiten“ → + Raum
+  $('moreBtn').disabled = !arOK;
+  $('alignBtn').classList.toggle('hidden', !!current.manual); // manuelle Pläne sind schon exakt
+  $('alignInfo').classList.add('hidden');
   $('editBtn').classList.toggle('hidden', !current.manual);
   renderPlan();
   window.scrollTo(0, 0);
 }
 function renderPlan() {
   $('planBox').innerHTML = planSVG(current);
+  $('alignBtn').textContent = current.raw ? 'Angleichen rückgängig' : 'Räume angleichen';
   const list = $('roomList');
   list.innerHTML = '';
   displayRooms(current).forEach((r, i) => {
@@ -422,6 +572,7 @@ function renderPlan() {
     inp.onchange = () => {
       current.rooms[i].name = inp.value.trim() || `Raum ${i + 1}`;
       if (current.manual) current.src[i].name = current.rooms[i].name;
+      if (current.raw?.[i]) current.raw[i].name = current.rooms[i].name;
       upsertPlan(current); renderPlan();
     };
     const info = document.createElement('span');
@@ -433,7 +584,7 @@ function renderPlan() {
     del.onclick = () => {
       if (!confirm(`„${r.name}“ löschen?`)) return;
       if (current.manual) { current.src.splice(i, 1); current.rooms = computeManual(current); }
-      else current.rooms.splice(i, 1);
+      else { current.rooms.splice(i, 1); current.raw?.splice(i, 1); }
       upsertPlan(current); renderPlan();
     };
     const wrap = document.createElement('div'); wrap.className = 'grow'; wrap.appendChild(inp);
@@ -443,7 +594,21 @@ function renderPlan() {
 }
 $('backBtn').onclick = () => { $('planView').classList.add('hidden'); $('home').classList.remove('hidden'); renderHome(); };
 $('planName').onchange = () => { current.name = $('planName').value.trim() || 'Plan'; upsertPlan(current); renderPlan(); };
-$('orthoChk').onchange = () => { current.ortho = $('orthoChk').checked; upsertPlan(current); renderPlan(); };
+$('alignBtn').onclick = () => {
+  const info = $('alignInfo');
+  if (current.raw) { // zurück zu den gemessenen Werten
+    current.rooms = current.raw; delete current.raw;
+    info.textContent = 'Originalmessung wiederhergestellt.';
+  } else {
+    current.raw = JSON.parse(JSON.stringify(current.rooms));
+    current.rooms = alignRooms(current.rooms);
+    current.ortho = false;
+    info.textContent = 'Angeglichen: Wände rechtwinklig, Räume parallel und bündig (Wandstärke gleichmäßig, nahe Standardmaße wie 12 oder 24 cm eingerastet), gemeinsame Türen deckungsgleich. Raummaße bleiben, Abweichungen werden gleichmäßig verteilt.';
+  }
+  info.classList.remove('hidden');
+  upsertPlan(current); renderPlan();
+};
+$('moreBtn').onclick = () => startAR(current);
 $('delPlanBtn').onclick = () => {
   if (!confirm('Diesen Plan wirklich löschen?')) return;
   savePlans(loadPlans().filter(p => p.id !== current.id));
@@ -508,7 +673,12 @@ let mode = 'corner';
 let doorPt = null;       // erste Türkante, solange die zweite fehlt
 let via = null;          // gewählte Tür {room, door}, durch die der nächste Raum betreten wird
 let camPos = null;       // aktuelle Kameraposition (für "nächste Tür")
-let curGroup, doneGroup;
+let pickSel = null;      // in der Türliste markierte (noch nicht bestätigte) Tür {room, door}
+// Weitermessen eines gespeicherten Plans: 'anchorPick' Tür im Plan wählen → 'anchorDoor' diese Tür neu messen
+let base = null;         // Plan, an den angebaut wird
+let anchor = null;       // {ri, di, A, B (Plankoordinaten: Scharnier, andere Kante), a, b (gemessen), swapped, checked}
+let xf = null;           // Sitzung → Plan: P = M + R(p − m), R = [[c,−s],[s,c]]
+let curGroup, doneGroup, hlGroup;
 let hit = null;          // aktuelle Trefferposition (Vector3) oder null
 let nearFirst = false;
 
@@ -541,13 +711,27 @@ function rebuildCurrent() {
   });
   if (doorPt) { const d = dot(DOOR_COLOR); d.position.copy(doorPt); curGroup.add(d); }
 }
+const PICK_COLOR = 0x22c55e;
+// Gewählte Tür als grüner, blinkender Türrahmen (2 m hoch), damit man sie im Raum sofort sieht
+function rebuildHighlight() {
+  clearGroup(hlGroup);
+  if (mode !== 'pickDoor' || !pickSel) return;
+  const [a, b] = rooms[pickSel.room].doors[pickSel.door];
+  const up = (p) => p.clone().add(new THREE.Vector3(0, 2, 0));
+  const s = segment(PICK_COLOR, 0.03); placeSegment(s, a, b); hlGroup.add(s);
+  for (const p of [a, b]) {
+    const post = segment(PICK_COLOR, 0.025); placeSegment(post, p, up(p)); hlGroup.add(post);
+    const d = dot(PICK_COLOR, 0.05); d.position.copy(p); hlGroup.add(d);
+  }
+  const top = segment(PICK_COLOR, 0.025); placeSegment(top, up(a), up(b)); hlGroup.add(top);
+}
 function rebuildDone() {
   clearGroup(doneGroup);
   for (const r of rooms) {
-    const n = r.pts.length;
+    const n = r.pts.length, col = r.old ? 0xa5b4fc : 0x60a5fa; // Räume aus dem gespeicherten Plan heller
     r.pts.forEach((p, i) => {
-      const d = dot(0x60a5fa, 0.018); d.position.copy(p); doneGroup.add(d);
-      const s = segment(0x60a5fa, 0.006); placeSegment(s, p, r.pts[(i + 1) % n]); doneGroup.add(s);
+      const d = dot(col, 0.018); d.position.copy(p); doneGroup.add(d);
+      const s = segment(col, 0.006); placeSegment(s, p, r.pts[(i + 1) % n]); doneGroup.add(s);
     });
     for (const [a, b] of r.doors) {
       for (const p of [a, b]) { const d = dot(DOOR_COLOR, 0.022); d.position.copy(p); doneGroup.add(d); }
@@ -561,17 +745,25 @@ function setButtons(undoTxt, mainTxt, sideTxt) {
 }
 function updateUI() {
   const last = rooms[rooms.length - 1];
-  const asking = mode === 'askDoor' || mode === 'askRoom' || mode === 'pickDoor';
-  $('arPick').classList.toggle('hidden', mode !== 'pickDoor');
-  $('arUndo').disabled = mode === 'corner' && cur.length === 0 && rooms.length === 0;
-  $('arAdd').disabled = !asking && !hit;
+  const picking = mode === 'pickDoor' || mode === 'anchorPick';
+  const asking = picking || mode === 'askDoor' || mode === 'askRoom';
+  $('arPick').classList.toggle('hidden', !picking);
+  $('arUndo').disabled = mode === 'anchorPick' || (mode === 'corner' && cur.length === 0 && rooms.length === 0 && !(base && planDoors(base).length));
+  $('arAdd').disabled = picking ? !pickSel : !asking && !hit;
   $('arClose').disabled = mode === 'corner' && cur.length < 3;
-  if (mode === 'pickDoor') {
+  if (mode === 'anchorPick') {
+    $('arInfo').textContent = `Weitermessen: ${base.name} · ${base.rooms.length} Raum/Räume`;
+    setButtons('Rückgängig', 'Diese Tür messen', 'Abbrechen');
+  } else if (mode === 'anchorDoor') {
+    $('arInfo').textContent = `Anschluss: ${base.rooms[anchor.ri].name} – Tür ${anchor.di + 1} (${fmtM(edgeLen(anchor.A, anchor.B))})`;
+    setButtons('Rückgängig', doorPt ? 'Andere Kante' : 'Scharnierkante', 'Abbrechen');
+  } else if (mode === 'pickDoor') {
     $('arInfo').textContent = `${rooms.length} Raum/Räume gemessen`;
-    setButtons('Rückgängig', 'Ohne Tür weiter', 'Plan zeigen');
+    setButtons('Rückgängig', 'Diese Tür nehmen', 'Plan zeigen');
   } else if (mode === 'corner') {
-    $('arInfo').textContent = `Raum ${rooms.length + 1} · ${cur.length} Ecke(n)` + (rooms.length ? ` · ${rooms.length} Raum/Räume fertig` : '')
-      + (via ? ` · über Tür von ${rooms[via.room].name}` : '');
+    $('arInfo').textContent = `Raum ${roomNo()} · ${cur.length} Ecke(n)` + (rooms.length ? ` · ${rooms.length} Raum/Räume fertig` : '')
+      + (via ? ` · über Tür von ${rooms[via.room].name}` : '')
+      + (base && !anchor?.a && !rooms.length ? ' · ohne Verbindung: kommt neben den Plan' : '');
     setButtons('Rückgängig', nearFirst ? 'Raum schließen' : 'Ecke setzen', 'Raum fertig');
   } else if (mode === 'door') {
     $('arInfo').textContent = `${last.name} · Tür ${last.doors.length + 1}`;
@@ -588,12 +780,16 @@ function setStatus(text) { $('arStatus').textContent = text; }
 function statusText() {
   if (mode === 'askDoor') return 'Gibt es noch eine Tür in diesem Raum?';
   if (mode === 'askRoom') return 'Soll noch ein Raum gemessen werden?';
-  if (mode === 'pickDoor') return 'Tür wählen';
+  if (mode === 'pickDoor') return 'Tür wählen – sie leuchtet grün';
+  if (mode === 'anchorPick') return 'An welcher Tür geht es weiter?';
   if (!hit) return 'Boden suchen… Handy langsam bewegen';
+  if (mode === 'anchorDoor') return doorPt ? 'Andere Türkante am Boden antippen' : 'Türkante an der Scharnierseite am Boden antippen';
   if (mode === 'door') return doorPt ? 'Rechte Türkante am Boden antippen' : 'Linke Türkante am Boden antippen (Scharnierseite)';
   if (nearFirst) return 'An der ersten Ecke: tippen schließt den Raum';
   return cur.length ? 'Nächste Ecke anpeilen' : 'Ring auf die erste Ecke am Boden setzen';
 }
+// fortlaufende Raumnummer, auch wenn neue Räume ohne Verbindung neben einen Plan kommen
+const roomNo = () => rooms.length + 1 + (base && !anchor?.a ? base.rooms.length : 0);
 
 // Hauptknopf / Tippen ins Bild
 function primary() {
@@ -603,9 +799,21 @@ function primary() {
     if (rooms.some(r => r.doors.length)) { mode = 'pickDoor'; showDoorPicker(); } else mode = 'corner';
     updateUI(); return;
   }
-  if (mode === 'pickDoor') { via = null; mode = 'corner'; updateUI(); return; } // ohne Tür weiter
+  if (mode === 'pickDoor') { // erst jetzt endgültig
+    if (!pickSel) return;
+    via = pickSel; pickSel = null; mode = 'corner'; rebuildHighlight(); navigator.vibrate?.(30); updateUI(); return;
+  }
+  if (mode === 'anchorPick') {
+    if (!pickSel) return;
+    const r = base.rooms[pickSel.room], d = r.doors[pickSel.door], n = r.pts.length;
+    const p = r.pts[d.wall], q = r.pts[(d.wall + 1) % n];
+    const at = (t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+    anchor = { ri: pickSel.room, di: pickSel.door, A: at(d.t0), B: at(d.t1) };
+    pickSel = null; mode = 'anchorDoor'; updateUI(); return;
+  }
   if (!hit) return;
   if (mode === 'door') { addDoorEdge(); return; }
+  if (mode === 'anchorDoor') { addAnchorEdge(); return; }
   if (nearFirst && cur.length >= 3) { closeRoom(); return; }
   cur.push(hit.clone());
   rebuildCurrent(); updateUI();
@@ -615,26 +823,55 @@ function primary() {
 function secondary() {
   if (mode === 'corner') closeRoom();
   else if (mode === 'door' || mode === 'askDoor') { doorPt = null; rebuildCurrent(); mode = 'askRoom'; updateUI(); }
-  else if (mode === 'askRoom' || mode === 'pickDoor') session?.end();
+  else session?.end(); // askRoom/pickDoor: Plan zeigen · anchorPick/anchorDoor: abbrechen
 }
-// Liste aller gemessenen Türen; die der Kamera nächste steht oben
+// Liste aller gemessenen Türen; die der Kamera nächste steht oben und ist vorgewählt (leuchtet grün)
 function showDoorPicker() {
   const list = [];
   rooms.forEach((r, ri) => r.doors.forEach(([a, b], di) => {
     const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
     const dist = camPos ? Math.hypot(camPos.x - mx, camPos.z - mz) : 0;
-    list.push({ ri, di, dist, w: Math.hypot(b.x - a.x, b.z - a.z) });
+    list.push({ room: ri, door: di, dist, w: Math.hypot(b.x - a.x, b.z - a.z) });
   }));
   list.sort((p, q) => p.dist - q.dist);
+  pickSel = list.length ? { room: list[0].room, door: list[0].door } : null;
+  $('arPickTitle').textContent = 'Durch welche Tür gehst du in den nächsten Raum?';
+  $('arPickHint').textContent = 'Die markierte Tür leuchtet im Kamerabild und im Plan grün. Andere antippen zum Wechseln, dann „Diese Tür nehmen“.';
+  renderPickList(list, () => ({ name: '', rooms: sessionPlanRooms() }), (d, k) =>
+    `${rooms[d.room].name} – Tür ${d.door + 1} (${fmtM(d.w)})` + (k === 0 && camPos ? ' · am nächsten' : ''), 'Ohne Tür weiter');
+  rebuildHighlight();
+}
+// Weitermessen: Tür des gespeicherten Plans wählen (Anzeige im Plan, AR kennt die Lage noch nicht)
+function planDoors(plan) {
+  const list = [];
+  plan.rooms.forEach((r, ri) => (r.doors || []).forEach((d, di) => { if (d.wall < r.pts.length) list.push({ room: ri, door: di, w: d.w }); }));
+  return list;
+}
+function showAnchorPicker() {
+  const list = planDoors(base);
+  pickSel = list.length ? { room: list[0].room, door: list[0].door } : null;
+  $('arPickTitle').textContent = 'An welcher Tür misst du weiter?';
+  $('arPickHint').textContent = 'Die gewählte Tür leuchtet im Plan grün. Danach misst du genau diese Tür noch einmal: zuerst die Kante an der Scharnierseite, dann die andere. So liegen die neuen Räume passend am Plan.';
+  renderPickList(list, () => base, (d) => `${base.rooms[d.room].name} – Tür ${d.door + 1} (${fmtM(d.w)})`, 'Ohne Verbindung (neben den Plan legen)');
+}
+function renderPickList(list, planFn, label, skipText) {
+  $('arPickPlan').innerHTML = planSVG(planFn(), null, { hl: pickSel });
   const box = $('arPickList');
   box.innerHTML = '';
   list.forEach((d, k) => {
     const btn = document.createElement('button');
-    if (k === 0 && camPos) btn.className = 'near';
-    btn.textContent = `${rooms[d.ri].name} – Tür ${d.di + 1} (${fmtM(d.w)})` + (k === 0 && camPos ? ' · am nächsten' : '');
-    btn.onclick = () => { via = { room: d.ri, door: d.di }; mode = 'corner'; navigator.vibrate?.(30); updateUI(); };
+    if (pickSel && pickSel.room === d.room && pickSel.door === d.door) btn.className = 'sel';
+    btn.textContent = label(d, k);
+    btn.onclick = () => {
+      pickSel = { room: d.room, door: d.door };
+      renderPickList(list, planFn, label, skipText); rebuildHighlight(); navigator.vibrate?.(20); updateUI();
+    };
     box.appendChild(btn);
   });
+  const skip = document.createElement('button');
+  skip.className = 'skip'; skip.textContent = skipText;
+  skip.onclick = () => { pickSel = null; via = null; anchor = null; mode = 'corner'; rebuildHighlight(); updateUI(); };
+  box.appendChild(skip);
 }
 function addDoorEdge() {
   if (!doorPt) { doorPt = hit.clone(); rebuildCurrent(); navigator.vibrate?.(30); updateUI(); return; }
@@ -643,9 +880,64 @@ function addDoorEdge() {
   doorPt = null; rebuildCurrent(); rebuildDone();
   mode = 'askDoor'; navigator.vibrate?.([40, 60, 40]); updateUI();
 }
+// ---- Anschluss an gespeicherten Plan über eine neu gemessene Tür ----
+function addAnchorEdge() {
+  if (!doorPt) { doorPt = hit.clone(); rebuildCurrent(); navigator.vibrate?.(30); updateUI(); return; }
+  if (Math.hypot(hit.x - doorPt.x, hit.z - doorPt.z) < 0.3) { setStatus('Zu schmal – andere Türkante weiter weg antippen'); return; }
+  Object.assign(anchor, { a: doorPt, b: hit.clone(), swapped: false, checked: false });
+  doorPt = null;
+  buildOldRooms();
+  via = { room: anchor.ri, door: anchor.di };
+  mode = 'corner'; rebuildCurrent(); rebuildDone(); navigator.vibrate?.([40, 60, 40]); updateUI();
+}
+function computeXf() {
+  const [h, o] = anchor.swapped ? [anchor.b, anchor.a] : [anchor.a, anchor.b];
+  const { A, B } = anchor;
+  const th = Math.atan2(B[1] - A[1], B[0] - A[0]) - Math.atan2(o.z - h.z, o.x - h.x);
+  xf = { c: Math.cos(th), s: Math.sin(th), m: [(h.x + o.x) / 2, (h.z + o.z) / 2], M: [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2] };
+}
+function toPlanPt(v) {
+  if (!xf) return [+v.x.toFixed(4), +v.z.toFixed(4)];
+  const x = v.x - xf.m[0], z = v.z - xf.m[1];
+  return [+(xf.M[0] + x * xf.c - z * xf.s).toFixed(4), +(xf.M[1] + x * xf.s + z * xf.c).toFixed(4)];
+}
+function fromPlanPt([X, Y], y) {
+  const x = X - xf.M[0], z = Y - xf.M[1];
+  return new THREE.Vector3(xf.m[0] + x * xf.c + z * xf.s, y, xf.m[1] - x * xf.s + z * xf.c);
+}
+// Räume des gespeicherten Plans in die laufende AR-Sitzung legen (zur Anzeige und Türwahl)
+function buildOldRooms() {
+  computeXf();
+  const y = anchor.a.y;
+  const old = base.rooms.map((r, bi) => {
+    const n = r.pts.length;
+    const doors = (r.doors || []).map((d, di) => {
+      if (bi === anchor.ri && di === anchor.di) return anchor.swapped ? [anchor.b.clone(), anchor.a.clone()] : [anchor.a.clone(), anchor.b.clone()];
+      const p = r.pts[d.wall % n], q = r.pts[(d.wall + 1) % n];
+      const at = (t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+      return [fromPlanPt(at(d.t0), y), fromPlanPt(at(d.t1), y)];
+    });
+    return { name: r.name, pts: r.pts.map(p => fromPlanPt(p, y)), doors, old: true, bi };
+  });
+  rooms = [...old, ...rooms.filter(r => !r.old)];
+}
+// Räume der Sitzung in Plankoordinaten (Index wie in rooms)
+function sessionPlanRooms() {
+  return rooms.map(r => {
+    if (r.old) return base.rooms[r.bi];
+    const pts = r.pts.map(toPlanPt);
+    const doors = r.doors.map(([a, b]) => attachDoor(pts, toPlanPt(a), toPlanPt(b)));
+    return { name: r.name, pts, doors, ...(r.via ? { via: r.via } : {}) };
+  });
+}
 function closeRoom() {
   if (cur.length < 3) return;
-  const room = { name: `Raum ${rooms.length + 1}`, pts: cur, doors: [], via };
+  // Erster Raum hinter der Anschlusstür: liegt er im alten Raum, wurden die Kanten andersherum getippt → drehen
+  if (anchor?.a && !anchor.checked && via && via.room === anchor.ri && via.door === anchor.di) {
+    anchor.checked = true;
+    if (pointInPoly(centroid(cur.map(toPlanPt)), base.rooms[anchor.ri].pts)) { anchor.swapped = true; buildOldRooms(); }
+  }
+  const room = { name: `Raum ${roomNo()}`, pts: cur, doors: [], via };
   // Die gewählte Durchgangstür gehört automatisch auch zum neuen Raum
   if (via) room.doors.push(rooms[via.room].doors[via.door].map(v => v.clone()));
   rooms.push(room);
@@ -656,15 +948,21 @@ function closeRoom() {
 }
 function undo() {
   const last = rooms[rooms.length - 1];
-  if (mode === 'corner' && cur.length) cur.pop();
+  if (mode === 'anchorDoor' && doorPt) doorPt = null;
+  else if (mode === 'anchorDoor') { anchor = null; mode = 'anchorPick'; showAnchorPicker(); }
+  else if (mode === 'corner' && cur.length) cur.pop();
+  else if (mode === 'corner' && last?.old) { // Anschlusstür neu messen
+    rooms = []; xf = null; via = null; doorPt = null; anchor.a = null; mode = 'anchorDoor';
+  }
   else if (mode === 'corner' && last) { mode = 'askRoom'; via = null; }
-  else if (mode === 'pickDoor') mode = 'askRoom';
+  else if (mode === 'corner' && base && planDoors(base).length) { anchor = null; mode = 'anchorPick'; showAnchorPicker(); }
+  else if (mode === 'pickDoor') { mode = 'askRoom'; pickSel = null; }
   else if (mode === 'askRoom') mode = last.doors.length ? 'askDoor' : 'door';
   else if (mode === 'askDoor') { last.doors.pop(); mode = 'door'; }
   else if (mode === 'door' && doorPt) doorPt = null;
   else if (mode === 'door' && last.doors.length) { last.doors.pop(); }
   else if (mode === 'door') { const r = rooms.pop(); cur = r.pts; via = r.via || null; mode = 'corner'; } // Raum wieder öffnen
-  rebuildCurrent(); rebuildDone(); updateUI();
+  rebuildCurrent(); rebuildDone(); rebuildHighlight(); updateUI();
 }
 
 for (const id of ['arUndo', 'arAdd', 'arClose', 'arExit', 'arPick']) {
@@ -676,8 +974,10 @@ $('arUndo').onclick = undo;
 $('arClose').onclick = secondary;
 $('arExit').onclick = () => session?.end();
 
-async function startAR() {
-  rooms = []; cur = []; hit = null; nearFirst = false; mode = 'corner'; doorPt = null; via = null; camPos = null;
+async function startAR(plan) {
+  rooms = []; cur = []; hit = null; nearFirst = false; doorPt = null; via = null; camPos = null; pickSel = null;
+  base = plan || null; anchor = null; xf = null;
+  mode = base && planDoors(base).length ? 'anchorPick' : 'corner';
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -694,8 +994,8 @@ async function startAR() {
   );
   reticle.matrixAutoUpdate = false; reticle.visible = false;
   scene.add(reticle);
-  curGroup = new THREE.Group(); doneGroup = new THREE.Group();
-  scene.add(curGroup, doneGroup);
+  curGroup = new THREE.Group(); doneGroup = new THREE.Group(); hlGroup = new THREE.Group();
+  scene.add(curGroup, doneGroup, hlGroup);
   liveSeg = segment(0xfacc15, 0.005); liveSeg.visible = false; scene.add(liveSeg);
 
   $('ar').style.display = 'block';
@@ -715,8 +1015,9 @@ async function startAR() {
   const viewer = await session.requestReferenceSpace('viewer');
   hitSource = await session.requestHitTestSource({ space: viewer });
   // Tippen ins Bild setzt Punkte, beantwortet aber keine Fragen
-  session.addEventListener('select', () => { if (mode === 'corner' || mode === 'door') primary(); });
+  session.addEventListener('select', () => { if (mode === 'corner' || mode === 'door' || mode === 'anchorDoor') primary(); });
   session.addEventListener('end', onEnd);
+  if (mode === 'anchorPick') showAnchorPicker();
   updateUI();
   renderer.setAnimationLoop(onFrame);
 }
@@ -734,13 +1035,14 @@ function onFrame(t, frame) {
     reticle.matrix.fromArray(pose.transform.matrix);
     hit = tmpV.setFromMatrixPosition(reticle.matrix).clone();
     nearFirst = mode === 'corner' && cur.length >= 3 && Math.hypot(hit.x - cur[0].x, hit.z - cur[0].z) < CLOSE_DIST;
-    reticle.visible = mode === 'corner' || mode === 'door';
-    reticle.material.color.set(nearFirst ? 0x22c55e : mode === 'door' ? DOOR_COLOR : 0xffffff);
-    const from = mode === 'corner' ? cur[cur.length - 1] : mode === 'door' ? doorPt : null;
+    const doorish = mode === 'door' || mode === 'anchorDoor';
+    reticle.visible = mode === 'corner' || doorish;
+    reticle.material.color.set(nearFirst ? 0x22c55e : mode === 'anchorDoor' ? PICK_COLOR : doorish ? DOOR_COLOR : 0xffffff);
+    const from = mode === 'corner' ? cur[cur.length - 1] : doorish ? doorPt : null;
     if (from) {
-      liveSeg.material.color.set(mode === 'door' ? DOOR_COLOR : 0xfacc15);
+      liveSeg.material.color.set(doorish ? DOOR_COLOR : 0xfacc15);
       placeSegment(liveSeg, from, nearFirst ? cur[0] : hit);
-      $('arLive').textContent = (mode === 'door' ? 'Tür ' : '') + fmtM(Math.hypot(hit.x - from.x, hit.z - from.z));
+      $('arLive').textContent = (doorish ? 'Tür ' : '') + fmtM(Math.hypot(hit.x - from.x, hit.z - from.z));
     } else {
       liveSeg.visible = false; $('arLive').textContent = '';
     }
@@ -748,6 +1050,7 @@ function onFrame(t, frame) {
     reticle.visible = false; liveSeg.visible = false; hit = null; nearFirst = false;
     $('arLive').textContent = '';
   }
+  hlGroup.visible = t % 900 < 600; // gewählte Tür blinkt
   setStatus(statusText());
   updateUI();
   renderer.render(scene, camera);
@@ -761,9 +1064,28 @@ function onEnd() {
   renderer.domElement.remove();
   renderer.dispose();
   if (mode === 'corner' && cur.length >= 3) closeRoom();
-  doorPt = null;
-  if (!rooms.length) { renderHome(); return; }
+  doorPt = null; pickSel = null;
   const now = new Date();
+  if (base) { // an gespeicherten Plan anbauen
+    const b = base;
+    const added = rooms.filter(r => !r.old).length;
+    if (!added) { base = null; openPlan(b.id); return; }
+    let newRooms;
+    if (anchor?.a) newRooms = sessionPlanRooms().slice(b.rooms.length);
+    else { // ohne Verbindung: 1 m rechts neben den Plan
+      const bp = b.rooms.flatMap(r => r.pts), sp = rooms.flatMap(r => r.pts);
+      xf = { c: 1, s: 0, m: [Math.min(...sp.map(v => v.x)), Math.min(...sp.map(v => v.z))],
+        M: [Math.max(...bp.map(p => p[0])) + 1, Math.min(...bp.map(p => p[1]))] };
+      newRooms = sessionPlanRooms().map(r => r.via ? { ...r, via: { room: r.via.room + b.rooms.length, door: r.via.door } } : r);
+    }
+    base = null;
+    const plan = { ...b, date: now.toISOString(), rooms: [...b.rooms, ...newRooms] };
+    delete plan.raw; // Angleichen bezieht sich auf den alten Stand
+    upsertPlan(plan);
+    openPlan(plan.id);
+    return;
+  }
+  if (!rooms.length) { renderHome(); return; }
   const plan = {
     id: now.getTime().toString(36) + Math.random().toString(36).slice(2, 6),
     name: 'Plan ' + now.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
@@ -982,6 +1304,7 @@ $('editBtn').onclick = () => { ed = current; edIdx = 0; openEditor(); };
 $('manualBtn').onclick = newManualPlan;
 
 // ---------- Start ----------
+let arOK = false;
 async function checkSupport() {
   let msg = '';
   if (!window.isSecureContext) msg = 'Die Seite muss über https:// oder http://localhost geöffnet werden, sonst ist AR gesperrt.';
@@ -990,9 +1313,10 @@ async function checkSupport() {
     const ok = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
     if (!ok) msg = 'Kamera-Scan geht auf diesem Gerät nicht (z. B. iPhone, oder auf Android fehlen „Google Play-Dienste für AR“).';
   }
+  arOK = !msg;
   if (msg) { $('noAr').textContent = msg + ' Nutze „Manuell eingeben“.'; $('noAr').classList.remove('hidden'); $('startBtn').disabled = true; }
 }
-$('startBtn').onclick = startAR;
+$('startBtn').onclick = () => startAR();
 renderHome();
 if (location.hash === '#demo') { // Beispielplan zum Ausprobieren der Planansicht
   upsertPlan({ id: 'demo', name: 'Beispielwohnung', date: new Date().toISOString(), ortho: false, rooms: [
@@ -1007,6 +1331,22 @@ if (location.hash === '#demo') { // Beispielplan zum Ausprobieren der Planansich
   openPlan('demo');
 }
 checkSupport();
+// Testzugang ohne Kamera (nur mit #selftest): Ablauf mit simulierten Bodentreffern prüfen
+if (location.hash === '#selftest') window.__rp = {
+  alignRooms, planSVG, primary, undo, secondary,
+  get: () => ({ rooms, mode, anchor, xf, via, pickSel, base, cur, hl: hlGroup.children.length }),
+  setHit: (x, z) => { hit = new THREE.Vector3(x, 0, z); nearFirst = mode === 'corner' && cur.length >= 3 && Math.hypot(x - cur[0].x, z - cur[0].z) < CLOSE_DIST; },
+  pick: (room, door) => { pickSel = { room, door }; rebuildHighlight(); },
+  start: (plan) => {
+    rooms = []; cur = []; hit = null; doorPt = null; via = null; camPos = null; pickSel = null;
+    base = plan || null; anchor = null; xf = null;
+    mode = base && planDoors(base).length ? 'anchorPick' : 'corner';
+    curGroup = new THREE.Group(); doneGroup = new THREE.Group(); hlGroup = new THREE.Group();
+    renderer = { setAnimationLoop() {}, domElement: { remove() {} }, dispose() {} };
+    if (mode === 'anchorPick') showAnchorPicker();
+  },
+  end: () => onEnd(),
+};
 </script>
 </body>
 </html>
