@@ -65,6 +65,9 @@
   #ar .bottom button.primary { background: #2563eb; border-color: #2563eb; }
   #ar .exit { position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px; pointer-events: auto;
     background: rgba(0,0,0,.45); color: #fff; border: 1px solid rgba(255,255,255,.4); padding: 8px 12px; }
+  #ar .lvl { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; pointer-events: auto; padding-right: 80px; }
+  #ar .lvl button { background: rgba(0,0,0,.45); color: #fff; border: 1px solid rgba(255,255,255,.45); padding: 7px 11px; margin-left: 4px; }
+  #ar .lvl button.on { background: #7c3aed; border-color: #a78bfa; }
   #ar .cross { position: absolute; left: 50%; top: 50%; width: 24px; height: 24px; margin: -12px 0 0 -12px; }
   #ar .cross::before, #ar .cross::after { content: ""; position: absolute; background: rgba(255,255,255,.8); }
   #ar .cross::before { left: 11px; top: 0; width: 2px; height: 24px; }
@@ -121,6 +124,7 @@
       <li>Pause gemacht? Plan öffnen → <b>+ Räume dazumessen</b>, die Tür wählen, an der es weitergeht, und diese Tür noch einmal antippen. Die neuen Räume landen passend im selben Plan.</li>
       <li><b>Räume angleichen</b> in der Planansicht macht Wände rechtwinklig und legt die Räume gerade und bündig aneinander (lässt sich rückgängig machen).</li>
     </ol>
+    <p><b>Boden oder Decke:</b> Bei jedem Raum wählst du oben <b>Ecken messen an: Boden | Decke</b>. Stehen unten Möbel in den Ecken, nimm <b>Decke</b>. Beim ersten Mal misst die App die Deckenhöhe: Kreuz auf die Decke oder die Kante Wand/Decke richten und <b>Höhe übernehmen</b> (oder mit − / + einstellen). Danach das Kreuz auf jede Deckenecke richten, die Ecke wird senkrecht auf den Boden übertragen. Türen werden weiter am Boden gemessen.</p>
     <p class="muted">Tipp: Wenn Möbel in der Ecke stehen, die Ecke am Boden davor schätzen oder die Wand entlang eine Hilfsecke setzen.</p>
   </div>
 
@@ -131,6 +135,7 @@
       <li>Türen eintragen: Wand, Abstand vom Wandanfang, Breite.</li>
       <li><b>+ Raum</b> und die Tür wählen, durch die man hineinkommt. Der Raum wird dort angehängt.</li>
     </ol>
+    <p class="muted">Stehen unten Möbel? Die Wände dann oben an der Decke von Ecke zu Ecke messen, das Maß ist dasselbe. Unter <b>Raum gemessen an</b> kannst du das beim Raum vermerken.</p>
   </div>
 
   <h2>Gespeicherte Pläne</h2>
@@ -156,6 +161,18 @@
     <button id="editBtn" class="hidden">Maße bearbeiten</button>
   </div>
   <p id="alignInfo" class="muted hidden"></p>
+  <div style="margin-top:10px" class="row">
+    <button id="lblBtn">Beschriftung ausblenden</button>
+    <button id="lblFilterBtn">Filter ▾</button>
+  </div>
+  <div id="lblOpts" class="card hidden" style="margin-top:8px">
+    <div class="muted" style="margin-bottom:6px">Das fällt beim Ausblenden weg (gilt auch für Bild und SVG):</div>
+    <div class="chips" id="lblChips"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="lblInner">Nur Innenmaße</button>
+      <button id="lblAll">Alles</button>
+    </div>
+  </div>
   <div id="planBox" style="margin-top:12px"></div>
   <h2>Räume</h2>
   <div id="roomList" class="list"></div>
@@ -182,6 +199,12 @@
     <div class="status" id="arStatus">Boden suchen…</div>
     <div class="live" id="arLive"></div>
     <div id="arInfo"></div>
+    <div class="lvl" id="arLvl">
+      Ecken messen an:<button id="arLvFloor">Boden</button><button id="arLvCeil">Decke</button>
+      <span id="arCeil" class="hidden">Decke <b id="arCeilH"></b>
+        <button id="arCeilDown" aria-label="Deckenhöhe 1 cm weniger">−</button><button id="arCeilUp" aria-label="Deckenhöhe 1 cm mehr">+</button><button id="arCeilMeasure">messen</button>
+      </span>
+    </div>
   </div>
   <div class="cross"></div>
   <div class="pick hidden" id="arPick">
@@ -434,6 +457,28 @@ function displayRooms(plan) {
 }
 
 // ---------- SVG-Grundriss ----------
+// Innenwand = direkt hinter der Wand (bis 40 cm, also durch die Wandstärke) liegt ein anderer Raum
+function innerWalls(rooms) {
+  return rooms.map((r, ri) => {
+    const n = r.pts.length, ccw = signedArea(r.pts) > 0;
+    return r.pts.map((p, i) => {
+      const q = r.pts[(i + 1) % n], dx = q[0] - p[0], dy = q[1] - p[1], l = Math.hypot(dx, dy) || 1;
+      const ox = (ccw ? dy : -dy) / l * 0.4, oy = (ccw ? -dx : dx) / l * 0.4; // nach außen
+      return [0.25, 0.5, 0.75].some(t => {
+        const s = [p[0] + dx * t + ox, p[1] + dy * t + oy];
+        return rooms.some((o, oi) => oi !== ri && pointInPoly(s, o.pts));
+      });
+    });
+  });
+}
+// Beschriftung: welche Teile beim Ausblenden wegfallen (Einstellung bleibt auf dem Gerät)
+const LABEL_KEY = 'raumplan.labels.v1';
+const LABEL_CATS = [['names', 'Raumnamen'], ['area', 'Flächen'], ['inner', 'Maße Innenwände'], ['outer', 'Maße Außenwände'], ['doors', 'Türbreiten']];
+let labels = { off: false, hide: { names: true, area: true, inner: true, outer: true, doors: true } };
+try { const s = JSON.parse(localStorage.getItem(LABEL_KEY) || 'null'); if (s?.hide) labels = { off: !!s.off, hide: { ...labels.hide, ...s.hide } }; } catch {}
+function saveLabels() { try { localStorage.setItem(LABEL_KEY, JSON.stringify(labels)); } catch {} }
+const labelOpts = () => (labels.off ? { hide: labels.hide } : {});
+
 function planSVG(plan, widthPx, opts = {}) {
   const rooms = displayRooms(plan).map((r, i) => ({ ...r, _i: i })).filter(r => r.pts.length >= 3);
   const all = rooms.flatMap(r => r.pts);
@@ -461,13 +506,16 @@ function planSVG(plan, widthPx, opts = {}) {
     const d = 'M' + pts.map(p => p.join(' ')).join('L') + 'Z';
     g += `<path d="${d}" fill="${fills[ri % fills.length]}" stroke="#1f2933" stroke-width="${fs * 0.3}" stroke-linejoin="round"/>`;
   });
-  rooms.forEach((r) => {
+  const hide = opts.hide || {};
+  const inner = (hide.inner || hide.outer) ? innerWalls(rooms) : null;
+  rooms.forEach((r, ri) => {
     const pts = r.pts.map(P);
     const ccw = signedArea(pts) > 0;
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i], b = pts[(i + 1) % pts.length];
       const len = edgeLen(r.pts[i], r.pts[(i + 1) % r.pts.length]);
       if (len < 0.05) continue;
+      if (inner && (inner[ri][i] ? hide.inner : hide.outer)) continue;
       const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
       let nx = b[1] - a[1], ny = -(b[0] - a[0]);
       const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
@@ -480,8 +528,9 @@ function planSVG(plan, widthPx, opts = {}) {
     }
     for (const p of pts) g += `<circle cx="${p[0]}" cy="${p[1]}" r="${fs * 0.28}" fill="#1f2933"/>`;
     const [cx, cy] = P(centroid(r.pts));
-    g += `<text x="${cx}" y="${cy - fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="#1f2933">${esc(r.name)}</text>`;
-    g += `<text x="${cx}" y="${cy + fs * 0.85}" text-anchor="middle" font-size="${fs * 0.8}" fill="#4b5563">${fmtA(Math.abs(signedArea(r.pts)))}</text>`;
+    const both = !hide.names && !hide.area;
+    if (!hide.names) g += `<text x="${cx}" y="${both ? cy - fs * 0.35 : cy}" text-anchor="middle" dominant-baseline="${both ? 'auto' : 'middle'}" font-size="${fs}" font-weight="700" fill="#1f2933">${esc(r.name)}</text>`;
+    if (!hide.area) g += `<text x="${cx}" y="${both ? cy + fs * 0.85 : cy}" text-anchor="middle" dominant-baseline="${both ? 'auto' : 'middle'}" font-size="${fs * 0.8}" fill="#4b5563">${fmtA(Math.abs(signedArea(r.pts)))}</text>`;
   });
   // Türen: Öffnung in der Wand + Aufschlagbogen (bei doppelt gemessener Tür nur einmal)
   const seen = [];
@@ -510,7 +559,7 @@ function planSVG(plan, widthPx, opts = {}) {
       const cross = (L[0] - H[0]) * (E[1] - H[1]) - (L[1] - H[1]) * (E[0] - H[0]);
       g += `<path d="M${H[0]} ${H[1]}L${L[0]} ${L[1]}A${rad} ${rad} 0 0 ${cross > 0 ? 1 : 0} ${E[0]} ${E[1]}" fill="none" stroke="#c2410c" stroke-width="${fs * 0.1}" stroke-dasharray="${fs * 0.3} ${fs * 0.15}"/>`;
       const mx = (H[0] + E[0]) / 2 + nx * rad * 0.35, my = (H[1] + E[1]) / 2 + ny * rad * 0.35;
-      g += `<text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="middle" font-size="${fs * 0.6}" fill="#c2410c">${fmtM(d.w)}</text>`;
+      if (!hide.doors) g += `<text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="middle" font-size="${fs * 0.6}" fill="#c2410c">${fmtM(d.w)}</text>`;
     });
   });
   g += hlSvg;
@@ -560,7 +609,8 @@ function openPlan(id) {
   window.scrollTo(0, 0);
 }
 function renderPlan() {
-  $('planBox').innerHTML = planSVG(current);
+  $('planBox').innerHTML = planSVG(current, null, labelOpts());
+  renderLabelUI();
   $('alignBtn').textContent = current.raw ? 'Angleichen rückgängig' : 'Räume angleichen';
   const list = $('roomList');
   list.innerHTML = '';
@@ -578,7 +628,7 @@ function renderPlan() {
     const info = document.createElement('span');
     info.className = 'muted'; info.style.whiteSpace = 'nowrap';
     const nd = (r.doors || []).length;
-    info.textContent = fmtA(Math.abs(signedArea(r.pts))) + ` · ${nd} ${nd === 1 ? 'Tür' : 'Türen'}`;
+    info.textContent = fmtA(Math.abs(signedArea(r.pts))) + ` · ${nd} ${nd === 1 ? 'Tür' : 'Türen'}` + (r.level === 'ceil' ? ' · Decke' : '');
     const del = document.createElement('button');
     del.className = 'danger'; del.textContent = '✕'; del.setAttribute('aria-label', 'Raum löschen');
     del.onclick = () => {
@@ -609,6 +659,28 @@ $('alignBtn').onclick = () => {
   upsertPlan(current); renderPlan();
 };
 $('moreBtn').onclick = () => startAR(current);
+// Beschriftung aus/an + Filter, was dabei wegfällt
+function renderLabelUI() {
+  const nHide = LABEL_CATS.filter(([k]) => labels.hide[k]).length;
+  $('lblBtn').textContent = labels.off ? 'Beschriftung zeigen' : 'Beschriftung ausblenden';
+  $('lblBtn').classList.toggle('primary', labels.off);
+  $('lblBtn').disabled = !labels.off && nHide === 0;
+  $('lblFilterBtn').textContent = `Filter (${nHide}/${LABEL_CATS.length}) ${$('lblOpts').classList.contains('hidden') ? '▾' : '▴'}`;
+  const box = $('lblChips');
+  box.innerHTML = '';
+  for (const [k, name] of LABEL_CATS) {
+    const b = document.createElement('button');
+    b.textContent = (labels.hide[k] ? '✓ ' : '') + name;
+    b.className = labels.hide[k] ? 'on' : '';
+    b.setAttribute('aria-pressed', labels.hide[k]);
+    b.onclick = () => { labels.hide[k] = !labels.hide[k]; saveLabels(); renderPlan(); };
+    box.appendChild(b);
+  }
+}
+$('lblBtn').onclick = () => { labels.off = !labels.off; saveLabels(); renderPlan(); };
+$('lblFilterBtn').onclick = () => { $('lblOpts').classList.toggle('hidden'); renderLabelUI(); };
+$('lblAll').onclick = () => { for (const [k] of LABEL_CATS) labels.hide[k] = true; saveLabels(); renderPlan(); };
+$('lblInner').onclick = () => { for (const [k] of LABEL_CATS) labels.hide[k] = k === 'inner'; saveLabels(); renderPlan(); };
 $('delPlanBtn').onclick = () => {
   if (!confirm('Diesen Plan wirklich löschen?')) return;
   savePlans(loadPlans().filter(p => p.id !== current.id));
@@ -621,10 +693,10 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 const fileBase = () => (current.name || 'Plan').replace(/[^\wäöüÄÖÜß -]+/g, '').trim() || 'Plan';
-$('svgBtn').onclick = () => download(new Blob([planSVG(current)], { type: 'image/svg+xml' }), fileBase() + '.svg');
+$('svgBtn').onclick = () => download(new Blob([planSVG(current, null, labelOpts())], { type: 'image/svg+xml' }), fileBase() + '.svg');
 $('pngBtn').onclick = () => {
   const W = 2400;
-  const svg = planSVG(current, W);
+  const svg = planSVG(current, W, labelOpts());
   const img = new Image();
   const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
   img.onload = () => {
@@ -670,7 +742,15 @@ let rooms = [];          // abgeschlossene Räume: [{name, pts:[Vector3], doors:
 let cur = [];            // Ecken des aktuellen Raums
 // Ablauf: 'corner' Ecken → 'door' Türkanten → 'askDoor' noch eine Tür? → 'askRoom' noch ein Raum?
 let mode = 'corner';
-let doorPt = null;       // erste Türkante, solange die zweite fehlt
+// Ecken am Boden oder an der Decke (wenn unten Möbel stehen). Deckenecken werden senkrecht auf den Boden gelotet.
+const CEIL_KEY = 'raumplan.ceil.v1';
+let level = 'floor';     // 'floor' | 'ceil'
+let floorY = null;       // Bodenhöhe in der Sitzung (tiefste nach oben zeigende Fläche)
+let ceilH = null;        // Deckenhöhe über dem Boden (m)
+let measuringH = false;  // Deckenhöhe wird gerade gemessen
+let hiHit = null;        // Treffer hoch oben (Decke oder Wand an der Decke) zum Höhe messen
+try { const v = parseFloat(localStorage.getItem(CEIL_KEY)); if (v > 1.5 && v < 6) ceilH = v; } catch {}
+let doorPt = null;      // erste Türkante, solange die zweite fehlt
 let via = null;          // gewählte Tür {room, door}, durch die der nächste Raum betreten wird
 let camPos = null;       // aktuelle Kameraposition (für "nächste Tür")
 let pickSel = null;      // in der Türliste markierte (noch nicht bestätigte) Tür {room, door}
@@ -749,8 +829,15 @@ function updateUI() {
   const asking = picking || mode === 'askDoor' || mode === 'askRoom';
   $('arPick').classList.toggle('hidden', !picking);
   $('arUndo').disabled = mode === 'anchorPick' || (mode === 'corner' && cur.length === 0 && rooms.length === 0 && !(base && planDoors(base).length));
-  $('arAdd').disabled = picking ? !pickSel : !asking && !hit;
+  const meas = mode === 'corner' && level === 'ceil' && measuringH;
+  $('arAdd').disabled = picking ? !pickSel : meas ? !hiHit : !asking && !hit;
   $('arClose').disabled = mode === 'corner' && cur.length < 3;
+  $('arLvl').classList.toggle('hidden', mode !== 'corner');
+  $('arLvFloor').classList.toggle('on', level === 'floor');
+  $('arLvCeil').classList.toggle('on', level === 'ceil');
+  $('arCeil').classList.toggle('hidden', level !== 'ceil');
+  $('arCeilH').textContent = ceilH ? fmtM(ceilH) : '?';
+  $('arCeilMeasure').classList.toggle('on', measuringH);
   if (mode === 'anchorPick') {
     $('arInfo').textContent = `Weitermessen: ${base.name} · ${base.rooms.length} Raum/Räume`;
     setButtons('Rückgängig', 'Diese Tür messen', 'Abbrechen');
@@ -764,7 +851,8 @@ function updateUI() {
     $('arInfo').textContent = `Raum ${roomNo()} · ${cur.length} Ecke(n)` + (rooms.length ? ` · ${rooms.length} Raum/Räume fertig` : '')
       + (via ? ` · über Tür von ${rooms[via.room].name}` : '')
       + (base && !anchor?.a && !rooms.length ? ' · ohne Verbindung: kommt neben den Plan' : '');
-    setButtons('Rückgängig', nearFirst ? 'Raum schließen' : 'Ecke setzen', 'Raum fertig');
+    if (meas) setButtons('Abbrechen', 'Höhe übernehmen', 'Raum fertig');
+    else setButtons('Rückgängig', nearFirst ? 'Raum schließen' : level === 'ceil' ? 'Deckenecke setzen' : 'Ecke setzen', 'Raum fertig');
   } else if (mode === 'door') {
     $('arInfo').textContent = `${last.name} · Tür ${last.doors.length + 1}`;
     setButtons('Rückgängig', doorPt ? 'Rechte Kante' : 'Linke Kante', last.doors.length ? 'Fertig mit Türen' : 'Keine Tür');
@@ -782,6 +870,13 @@ function statusText() {
   if (mode === 'askRoom') return 'Soll noch ein Raum gemessen werden?';
   if (mode === 'pickDoor') return 'Tür wählen – sie leuchtet grün';
   if (mode === 'anchorPick') return 'An welcher Tür geht es weiter?';
+  if (mode === 'corner' && level === 'ceil') {
+    if (floorY === null) return 'Erst kurz auf den Boden richten (für die Bodenhöhe)';
+    if (measuringH) return hiHit ? `Decke erkannt (${fmtM(hiHit.y - floorY)}) – „Höhe übernehmen“` : 'Deckenhöhe: Kreuz auf die Decke oder die Kante Wand/Decke richten, langsam bewegen';
+    if (!hit) return 'Kreuz höher auf die Deckenecke richten';
+    if (nearFirst) return 'An der ersten Ecke: tippen schließt den Raum';
+    return cur.length ? 'Nächste Deckenecke anpeilen' : 'Kreuz auf die erste Deckenecke richten';
+  }
   if (!hit) return 'Boden suchen… Handy langsam bewegen';
   if (mode === 'anchorDoor') return doorPt ? 'Andere Türkante am Boden antippen' : 'Türkante an der Scharnierseite am Boden antippen';
   if (mode === 'door') return doorPt ? 'Rechte Türkante am Boden antippen' : 'Linke Türkante am Boden antippen (Scharnierseite)';
@@ -810,6 +905,10 @@ function primary() {
     const at = (t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
     anchor = { ri: pickSel.room, di: pickSel.door, A: at(d.t0), B: at(d.t1) };
     pickSel = null; mode = 'anchorDoor'; updateUI(); return;
+  }
+  if (mode === 'corner' && level === 'ceil' && measuringH) { // Deckenhöhe übernehmen
+    if (!hiHit || floorY === null) return;
+    setCeilH(hiHit.y - floorY); navigator.vibrate?.([40, 60, 40]); return;
   }
   if (!hit) return;
   if (mode === 'door') { addDoorEdge(); return; }
@@ -927,7 +1026,7 @@ function sessionPlanRooms() {
     if (r.old) return base.rooms[r.bi];
     const pts = r.pts.map(toPlanPt);
     const doors = r.doors.map(([a, b]) => attachDoor(pts, toPlanPt(a), toPlanPt(b)));
-    return { name: r.name, pts, doors, ...(r.via ? { via: r.via } : {}) };
+    return { name: r.name, pts, doors, ...(r.via ? { via: r.via } : {}), ...(r.level === 'ceil' ? { level: 'ceil' } : {}) };
   });
 }
 function closeRoom() {
@@ -937,7 +1036,7 @@ function closeRoom() {
     anchor.checked = true;
     if (pointInPoly(centroid(cur.map(toPlanPt)), base.rooms[anchor.ri].pts)) { anchor.swapped = true; buildOldRooms(); }
   }
-  const room = { name: `Raum ${roomNo()}`, pts: cur, doors: [], via };
+  const room = { name: `Raum ${roomNo()}`, pts: cur, doors: [], via, level };
   // Die gewählte Durchgangstür gehört automatisch auch zum neuen Raum
   if (via) room.doors.push(rooms[via.room].doors[via.door].map(v => v.clone()));
   rooms.push(room);
@@ -946,8 +1045,27 @@ function closeRoom() {
   mode = room.doors.length ? 'askDoor' : 'door';
   navigator.vibrate?.([40, 60, 40]); updateUI();
 }
+function setCeilH(h) {
+  ceilH = Math.min(6, Math.max(1.5, +h.toFixed(3))); measuringH = false;
+  try { localStorage.setItem(CEIL_KEY, String(ceilH)); } catch {}
+  updateUI();
+}
+function setLevel(l) {
+  level = l;
+  measuringH = level === 'ceil' && !ceilH; // Höhe noch unbekannt → zuerst messen
+  navigator.vibrate?.(20); updateUI();
+}
+$('arLvFloor').onclick = () => setLevel('floor');
+$('arLvCeil').onclick = () => setLevel('ceil');
+$('arCeilMeasure').onclick = () => { measuringH = !measuringH || !ceilH; updateUI(); };
+$('arCeilUp').onclick = () => setCeilH((ceilH || 2.5) + 0.01);
+$('arCeilDown').onclick = () => setCeilH((ceilH || 2.5) - 0.01);
 function undo() {
   const last = rooms[rooms.length - 1];
+  if (mode === 'corner' && measuringH) { // Höhe messen abbrechen
+    measuringH = false; if (!ceilH) level = 'floor';
+    updateUI(); return;
+  }
   if (mode === 'anchorDoor' && doorPt) doorPt = null;
   else if (mode === 'anchorDoor') { anchor = null; mode = 'anchorPick'; showAnchorPicker(); }
   else if (mode === 'corner' && cur.length) cur.pop();
@@ -965,7 +1083,7 @@ function undo() {
   rebuildCurrent(); rebuildDone(); rebuildHighlight(); updateUI();
 }
 
-for (const id of ['arUndo', 'arAdd', 'arClose', 'arExit', 'arPick']) {
+for (const id of ['arUndo', 'arAdd', 'arClose', 'arExit', 'arPick', 'arLvl']) {
   // Tippen auf Knöpfe soll keinen AR-"select" (= Punkt setzen) auslösen
   $(id).addEventListener('beforexrselect', (e) => e.preventDefault());
 }
@@ -977,6 +1095,7 @@ $('arExit').onclick = () => session?.end();
 async function startAR(plan) {
   rooms = []; cur = []; hit = null; nearFirst = false; doorPt = null; via = null; camPos = null; pickSel = null;
   base = plan || null; anchor = null; xf = null;
+  floorY = null; measuringH = false; hiHit = null;
   mode = base && planDoors(base).length ? 'anchorPick' : 'corner';
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -990,7 +1109,7 @@ async function startAR(plan) {
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 50);
   reticle = new THREE.Mesh(
     new THREE.RingGeometry(0.06, 0.08, 32).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0xffffff })
+    new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }) // an der Decke von unten sichtbar
   );
   reticle.matrixAutoUpdate = false; reticle.visible = false;
   scene.add(reticle);
@@ -1022,34 +1141,59 @@ async function startAR(plan) {
   renderer.setAnimationLoop(onFrame);
 }
 
-const tmpV = new THREE.Vector3();
+const tmpM = new THREE.Matrix4(), tmpD = new THREE.Vector3(), tmpQ = new THREE.Quaternion();
+const CEIL_COLOR = 0xa78bfa;
 function onFrame(t, frame) {
   if (!frame) return;
   const ref = renderer.xr.getReferenceSpace();
   const vp = frame.getViewerPose(ref);
   if (vp) camPos = vp.transform.position;
   const results = hitSource ? frame.getHitTestResults(hitSource) : [];
-  if (results.length) {
-    const pose = results[0].getPose(ref);
-    reticle.visible = true;
-    reticle.matrix.fromArray(pose.transform.matrix);
-    hit = tmpV.setFromMatrixPosition(reticle.matrix).clone();
-    nearFirst = mode === 'corner' && cur.length >= 3 && Math.hypot(hit.x - cur[0].x, hit.z - cur[0].z) < CLOSE_DIST;
-    const doorish = mode === 'door' || mode === 'anchorDoor';
-    reticle.visible = mode === 'corner' || doorish;
-    reticle.material.color.set(nearFirst ? 0x22c55e : mode === 'anchorDoor' ? PICK_COLOR : doorish ? DOOR_COLOR : 0xffffff);
-    const from = mode === 'corner' ? cur[cur.length - 1] : doorish ? doorPt : null;
-    if (from) {
-      liveSeg.material.color.set(doorish ? DOOR_COLOR : 0xfacc15);
-      placeSegment(liveSeg, from, nearFirst ? cur[0] : hit);
-      $('arLive').textContent = (doorish ? 'Tür ' : '') + fmtM(Math.hypot(hit.x - from.x, hit.z - from.z));
-    } else {
-      liveSeg.visible = false; $('arLive').textContent = '';
-    }
-  } else {
-    reticle.visible = false; liveSeg.visible = false; hit = null; nearFirst = false;
-    $('arLive').textContent = '';
+  let fh = null;
+  hiHit = null;
+  for (const r of results) {
+    const pose = r.getPose(ref);
+    if (!pose) continue;
+    tmpM.fromArray(pose.transform.matrix);
+    const p = new THREE.Vector3().setFromMatrixPosition(tmpM);
+    if (!fh) { fh = p; reticle.matrix.copy(tmpM); }
+    if (tmpM.elements[5] > 0.9 && (floorY === null || p.y < floorY)) floorY = p.y; // nach oben zeigende Fläche, tiefste = Boden
+    if (!hiHit && floorY !== null && p.y > floorY + 1.5) hiHit = p; // Decke oder Wand knapp unter der Decke
   }
+  const ceilMode = mode === 'corner' && level === 'ceil';
+  const lift = ceilMode && ceilH && floorY !== null ? ceilH : 0;
+  hit = null;
+  let rv = false;
+  if (ceilMode) {
+    if (measuringH) {
+      if (hiHit) { reticle.matrix.makeTranslation(hiHit.x, hiHit.y, hiHit.z); rv = true; }
+    } else if (lift && vp) {
+      // Blickstrahl (Bildmitte) mit der Deckenebene schneiden, Punkt senkrecht auf den Boden loten
+      const o = vp.transform.position, q = vp.transform.orientation;
+      tmpD.set(0, 0, -1).applyQuaternion(tmpQ.set(q.x, q.y, q.z, q.w));
+      const cy = floorY + ceilH;
+      const k = tmpD.y > 0.05 ? (cy - o.y) / tmpD.y : -1;
+      if (k > 0 && k < 20) {
+        hit = new THREE.Vector3(o.x + tmpD.x * k, floorY, o.z + tmpD.z * k);
+        reticle.matrix.makeTranslation(hit.x, cy, hit.z); rv = true;
+      }
+    }
+  } else if (fh) { hit = fh; rv = true; }
+  nearFirst = !!hit && mode === 'corner' && cur.length >= 3 && Math.hypot(hit.x - cur[0].x, hit.z - cur[0].z) < CLOSE_DIST;
+  const doorish = mode === 'door' || mode === 'anchorDoor';
+  reticle.visible = rv && (mode === 'corner' || doorish);
+  reticle.material.color.set(nearFirst ? 0x22c55e : ceilMode ? CEIL_COLOR : mode === 'anchorDoor' ? PICK_COLOR : doorish ? DOOR_COLOR : 0xffffff);
+  const from = !hit ? null : mode === 'corner' ? cur[cur.length - 1] : doorish ? doorPt : null;
+  if (from) {
+    const L = (v) => lift ? new THREE.Vector3(v.x, floorY + lift, v.z) : v; // an der Decke anzeigen
+    liveSeg.material.color.set(doorish ? DOOR_COLOR : ceilMode ? CEIL_COLOR : 0xfacc15);
+    placeSegment(liveSeg, L(from), L(nearFirst ? cur[0] : hit));
+    $('arLive').textContent = (doorish ? 'Tür ' : '') + fmtM(Math.hypot(hit.x - from.x, hit.z - from.z));
+  } else {
+    liveSeg.visible = false;
+    $('arLive').textContent = ceilMode && measuringH && hiHit ? 'Höhe ' + fmtM(hiHit.y - floorY) : '';
+  }
+  curGroup.position.y = lift; // Ecken des aktuellen Raums im Deckenmodus oben zeigen
   hlGroup.visible = t % 900 < 600; // gewählte Tür blinkt
   setStatus(statusText());
   updateUI();
@@ -1094,7 +1238,7 @@ function onEnd() {
     rooms: rooms.map(r => {
       const pts = r.pts.map(v => [+v.x.toFixed(4), +v.z.toFixed(4)]);
       const doors = r.doors.map(([a, b]) => attachDoor(pts, [a.x, a.z], [b.x, b.z]));
-      return { name: r.name, pts, doors, ...(r.via ? { via: r.via } : {}) };
+      return { name: r.name, pts, doors, ...(r.via ? { via: r.via } : {}), ...(r.level === 'ceil' ? { level: 'ceil' } : {}) };
     }),
   };
   upsertPlan(plan);
@@ -1170,7 +1314,7 @@ function computeManual(plan) {
       }
     }
     const srcDoors = src.doors.map(d => doorOnWall(P, d));
-    const room = { name: src.name, pts: P, doors: srcDoors.filter(Boolean), srcDoors };
+    const room = { name: src.name, pts: P, doors: srcDoors.filter(Boolean), srcDoors, ...(src.level === 'ceil' ? { level: 'ceil' } : {}) };
     out.push(room); byId[src.id] = room;
   }
   return out.map(({ srcDoors, ...r }) => r);
@@ -1207,6 +1351,7 @@ function renderEditor() {
   const P = roomShape(r).pts, nW = P.length >= 3 ? P.length : 0;
   const wallOpts = (sel) => opt('', 'Wand wählen', sel) + Array.from({ length: nW }, (_, i) => opt(i, `W${i + 1}`, sel)).join('');
   let h = `<label>Name<input type="text" data-f="name" value="${esc(r.name)}"></label>
+    <label style="display:block;margin-top:8px">Raum gemessen an<select data-f="level">${opt('floor', 'Boden', r.level || 'floor')}${opt('ceil', 'Decke (unten verstellt)', r.level || 'floor')}</select></label>
     <h3>Rechteck schnell</h3>
     <div class="row"><input class="num" type="text" inputmode="decimal" id="rectL" placeholder="Länge"> ×
       <input class="num" type="text" inputmode="decimal" id="rectB" placeholder="Breite"> m
@@ -1254,6 +1399,7 @@ function edField(e) {
   else if (f === 'dwidth') r.doors[i].width = v;
   else if (f === 'dhinge') r.doors[i].hinge = v;
   else if (f === 'thick') ed.thick = v;
+  else if (f === 'level') r.level = v;
   else if (f === 'ltarget') {
     r.link.target = v;
     // passende Tür im neuen Raum gleich mit anlegen, falls noch keine gewählt
@@ -1333,7 +1479,9 @@ if (location.hash === '#demo') { // Beispielplan zum Ausprobieren der Planansich
 checkSupport();
 // Testzugang ohne Kamera (nur mit #selftest): Ablauf mit simulierten Bodentreffern prüfen
 if (location.hash === '#selftest') window.__rp = {
-  alignRooms, planSVG, primary, undo, secondary,
+  alignRooms, planSVG, primary, undo, secondary, innerWalls, setLevel, setCeilH,
+  ceil: (fy, hiY) => { floorY = fy; hiHit = hiY == null ? null : new THREE.Vector3(1, hiY, 1); },
+  lv: () => ({ level, ceilH, measuringH, floorY, btn: $('arAdd').textContent }),
   get: () => ({ rooms, mode, anchor, xf, via, pickSel, base, cur, hl: hlGroup.children.length }),
   setHit: (x, z) => { hit = new THREE.Vector3(x, 0, z); nearFirst = mode === 'corner' && cur.length >= 3 && Math.hypot(x - cur[0].x, z - cur[0].z) < CLOSE_DIST; },
   pick: (room, door) => { pickSel = { room, door }; rebuildHighlight(); },
