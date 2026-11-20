@@ -200,7 +200,7 @@
     <div class="live" id="arLive"></div>
     <div id="arInfo"></div>
     <div class="lvl" id="arLvl">
-      Ecken messen an:<button id="arLvFloor">Boden</button><button id="arLvCeil">Decke</button>
+      <span id="arLvlTxt">Ecken messen an:</span><button id="arLvFloor">Boden</button><button id="arLvCeil">Decke</button>
       <span id="arCeil" class="hidden">Decke <b id="arCeilH"></b>
         <button id="arCeilDown" aria-label="Deckenhöhe 1 cm weniger">−</button><button id="arCeilUp" aria-label="Deckenhöhe 1 cm mehr">+</button><button id="arCeilMeasure">messen</button>
       </span>
@@ -832,7 +832,9 @@ function updateUI() {
   const meas = mode === 'corner' && level === 'ceil' && measuringH;
   $('arAdd').disabled = picking ? !pickSel : meas ? !hiHit : !asking && !hit;
   $('arClose').disabled = mode === 'corner' && cur.length < 3;
-  $('arLvl').classList.toggle('hidden', mode !== 'corner');
+  // Wahl Boden/Decke schon vor dem Raum anzeigen (auch beim Dazumessen und bei „nächster Raum?“), nicht bei Türen
+  $('arLvl').classList.toggle('hidden', mode === 'door' || mode === 'askDoor');
+  $('arLvlTxt').textContent = mode === 'corner' ? 'Ecken messen an:' : 'Nächsten Raum messen an:';
   $('arLvFloor').classList.toggle('on', level === 'floor');
   $('arLvCeil').classList.toggle('on', level === 'ceil');
   $('arCeil').classList.toggle('hidden', level !== 'ceil');
