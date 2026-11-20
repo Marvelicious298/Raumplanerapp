@@ -124,7 +124,7 @@
       <li>Pause gemacht? Plan öffnen → <b>+ Räume dazumessen</b>, die Tür wählen, an der es weitergeht, und diese Tür noch einmal antippen. Die neuen Räume landen passend im selben Plan.</li>
       <li><b>Räume angleichen</b> in der Planansicht macht Wände rechtwinklig und legt die Räume gerade und bündig aneinander (lässt sich rückgängig machen).</li>
     </ol>
-    <p><b>Boden oder Decke:</b> Bei jedem Raum wählst du oben <b>Ecken messen an: Boden | Decke</b>. Stehen unten Möbel in den Ecken, nimm <b>Decke</b>. Beim ersten Mal misst die App die Deckenhöhe: Kreuz auf die Decke oder die Kante Wand/Decke richten und <b>Höhe übernehmen</b> (oder mit − / + einstellen). Danach das Kreuz auf jede Deckenecke richten, die Ecke wird senkrecht auf den Boden übertragen. Türen werden weiter am Boden gemessen.</p>
+    <p><b>Boden oder Decke:</b> Bei jedem Raum wählst du oben <b>Ecken messen an: Boden | Decke</b>. Stehen unten Möbel in den Ecken, nimm <b>Decke</b>. Beim ersten Mal misst die App die Deckenhöhe: Ring an einer freien Stelle unten an die Wand auf den Boden setzen (<b>Bodenpunkt setzen</b>), dann das Handy langsam hochneigen, bis das Kreuz genau auf der Kante Wand/Decke darüber sitzt, und <b>Höhe übernehmen</b> (oder mit − / + einstellen). Danach das Kreuz auf jede Deckenecke richten, die Ecke wird senkrecht auf den Boden übertragen. Tipp: aus 2–3 m Abstand zielen, damit Wände mit im Bild bleiben – eine reine weiße Decke im Bild lässt die Kamera die Orientierung verlieren. Türen werden weiter am Boden gemessen.</p>
     <p class="muted">Tipp: Wenn Möbel in der Ecke stehen, die Ecke am Boden davor schätzen oder die Wand entlang eine Hilfsecke setzen.</p>
   </div>
 
@@ -748,7 +748,11 @@ let level = 'floor';     // 'floor' | 'ceil'
 let floorY = null;       // Bodenhöhe in der Sitzung (tiefste nach oben zeigende Fläche)
 let ceilH = null;        // Deckenhöhe über dem Boden (m)
 let measuringH = false;  // Deckenhöhe wird gerade gemessen
-let hiHit = null;        // Treffer hoch oben (Decke oder Wand an der Decke) zum Höhe messen
+// Höhe messen ohne erkannte Decke: Bodenpunkt an einer Wand setzen, dann zur Kante Wand/Decke senkrecht darüber neigen
+let hBase = null;        // gesetzter Bodenpunkt
+let hVal = null;         // aktuell angepeilte Höhe über dem Bodenpunkt
+let lost = false;        // Kamera hat die Orientierung verloren (z. B. weiße Decke ohne Struktur)
+let anchored = [], pendingAnchors = []; // XR-Anker: gesetzte Punkte folgen den Korrekturen von ARCore
 try { const v = parseFloat(localStorage.getItem(CEIL_KEY)); if (v > 1.5 && v < 6) ceilH = v; } catch {}
 let doorPt = null;      // erste Türkante, solange die zweite fehlt
 let via = null;          // gewählte Tür {room, door}, durch die der nächste Raum betreten wird
@@ -830,7 +834,7 @@ function updateUI() {
   $('arPick').classList.toggle('hidden', !picking);
   $('arUndo').disabled = mode === 'anchorPick' || (mode === 'corner' && cur.length === 0 && rooms.length === 0 && !(base && planDoors(base).length));
   const meas = mode === 'corner' && level === 'ceil' && measuringH;
-  $('arAdd').disabled = picking ? !pickSel : meas ? !hiHit : !asking && !hit;
+  $('arAdd').disabled = picking ? !pickSel : meas ? (hBase ? hVal == null : !hit) : !asking && !hit;
   $('arClose').disabled = mode === 'corner' && cur.length < 3;
   // Wahl Boden/Decke schon vor dem Raum anzeigen (auch beim Dazumessen und bei „nächster Raum?“), nicht bei Türen
   $('arLvl').classList.toggle('hidden', mode === 'door' || mode === 'askDoor');
@@ -853,7 +857,7 @@ function updateUI() {
     $('arInfo').textContent = `Raum ${roomNo()} · ${cur.length} Ecke(n)` + (rooms.length ? ` · ${rooms.length} Raum/Räume fertig` : '')
       + (via ? ` · über Tür von ${rooms[via.room].name}` : '')
       + (base && !anchor?.a && !rooms.length ? ' · ohne Verbindung: kommt neben den Plan' : '');
-    if (meas) setButtons('Abbrechen', 'Höhe übernehmen', 'Raum fertig');
+    if (meas) setButtons(hBase ? 'Rückgängig' : 'Abbrechen', hBase ? 'Höhe übernehmen' : 'Bodenpunkt setzen', 'Raum fertig');
     else setButtons('Rückgängig', nearFirst ? 'Raum schließen' : level === 'ceil' ? 'Deckenecke setzen' : 'Ecke setzen', 'Raum fertig');
   } else if (mode === 'door') {
     $('arInfo').textContent = `${last.name} · Tür ${last.doors.length + 1}`;
@@ -872,9 +876,15 @@ function statusText() {
   if (mode === 'askRoom') return 'Soll noch ein Raum gemessen werden?';
   if (mode === 'pickDoor') return 'Tür wählen – sie leuchtet grün';
   if (mode === 'anchorPick') return 'An welcher Tür geht es weiter?';
+  if (lost && (mode === 'corner' || mode === 'door' || mode === 'anchorDoor'))
+    return 'Orientierung verloren – Handy langsam senken, bis Wände und Boden wieder im Bild sind';
+  if (mode === 'corner' && level === 'ceil' && measuringH) {
+    if (!hBase) return hit ? 'Deckenhöhe: Ring unten an eine Wand auf den Boden setzen und tippen' : 'Boden suchen… Handy langsam bewegen';
+    return hVal != null ? `Höhe ${fmtM(hVal)} – Kreuz genau auf die Kante Wand/Decke darüber, dann „Höhe übernehmen“`
+      : 'Handy langsam nach oben neigen bis zur Kante Wand/Decke senkrecht über dem Punkt';
+  }
   if (mode === 'corner' && level === 'ceil') {
     if (floorY === null) return 'Erst kurz auf den Boden richten (für die Bodenhöhe)';
-    if (measuringH) return hiHit ? `Decke erkannt (${fmtM(hiHit.y - floorY)}) – „Höhe übernehmen“` : 'Deckenhöhe: Kreuz auf die Decke oder die Kante Wand/Decke richten, langsam bewegen';
     if (!hit) return 'Kreuz höher auf die Deckenecke richten';
     if (nearFirst) return 'An der ersten Ecke: tippen schließt den Raum';
     return cur.length ? 'Nächste Deckenecke anpeilen' : 'Kreuz auf die erste Deckenecke richten';
@@ -908,15 +918,18 @@ function primary() {
     anchor = { ri: pickSel.room, di: pickSel.door, A: at(d.t0), B: at(d.t1) };
     pickSel = null; mode = 'anchorDoor'; updateUI(); return;
   }
-  if (mode === 'corner' && level === 'ceil' && measuringH) { // Deckenhöhe übernehmen
-    if (!hiHit || floorY === null) return;
-    setCeilH(hiHit.y - floorY); navigator.vibrate?.([40, 60, 40]); return;
+  if (mode === 'corner' && level === 'ceil' && measuringH) { // Deckenhöhe: erst Bodenpunkt, dann Höhe übernehmen
+    if (!hBase) { if (!hit) return; hBase = hit.clone(); navigator.vibrate?.(30); updateUI(); return; }
+    if (hVal == null) return;
+    const h = hVal; hBase = null; hVal = null;
+    setCeilH(h); navigator.vibrate?.([40, 60, 40]); return;
   }
   if (!hit) return;
   if (mode === 'door') { addDoorEdge(); return; }
   if (mode === 'anchorDoor') { addAnchorEdge(); return; }
   if (nearFirst && cur.length >= 3) { closeRoom(); return; }
   cur.push(hit.clone());
+  anchorPoint(cur[cur.length - 1]);
   rebuildCurrent(); updateUI();
   navigator.vibrate?.(30);
 }
@@ -975,9 +988,10 @@ function renderPickList(list, planFn, label, skipText) {
   box.appendChild(skip);
 }
 function addDoorEdge() {
-  if (!doorPt) { doorPt = hit.clone(); rebuildCurrent(); navigator.vibrate?.(30); updateUI(); return; }
+  if (!doorPt) { doorPt = hit.clone(); anchorPoint(doorPt); rebuildCurrent(); navigator.vibrate?.(30); updateUI(); return; }
   if (Math.hypot(hit.x - doorPt.x, hit.z - doorPt.z) < 0.3) { setStatus('Zu schmal – rechte Türkante weiter weg antippen'); return; }
-  rooms[rooms.length - 1].doors.push([doorPt, hit.clone()]);
+  const b = hit.clone(); anchorPoint(b);
+  rooms[rooms.length - 1].doors.push([doorPt, b]);
   doorPt = null; rebuildCurrent(); rebuildDone();
   mode = 'askDoor'; navigator.vibrate?.([40, 60, 40]); updateUI();
 }
@@ -1052,19 +1066,44 @@ function setCeilH(h) {
   try { localStorage.setItem(CEIL_KEY, String(ceilH)); } catch {}
   updateUI();
 }
+// Punkt im nächsten Frame mit einem XR-Anker an der angepeilten Stelle (Ring) verknüpfen
+function anchorPoint(v) {
+  if (reticle) pendingAnchors.push({ v, at: new THREE.Vector3().setFromMatrixPosition(reticle.matrix) });
+}
+function updateAnchors(frame, ref) {
+  if (pendingAnchors.length && frame.createAnchor && window.XRRigidTransform) {
+    for (const { v, at } of pendingAnchors.splice(0)) {
+      try {
+        frame.createAnchor(new XRRigidTransform({ x: at.x, y: at.y, z: at.z }), ref)
+          .then(a => anchored.push({ a, v, dx: v.x - at.x, dz: v.z - at.z })).catch(() => {});
+      } catch {}
+    }
+  }
+  pendingAnchors.length = 0;
+  let moved = false;
+  for (const e of anchored) {
+    if (frame.trackedAnchors && !frame.trackedAnchors.has(e.a)) continue;
+    const pose = frame.getPose(e.a.anchorSpace, ref);
+    if (!pose) continue;
+    const p = pose.transform.position, x = p.x + e.dx, z = p.z + e.dz;
+    if (Math.hypot(x - e.v.x, z - e.v.z) > 0.003) { e.v.x = x; e.v.z = z; moved = true; }
+  }
+  if (moved) { rebuildCurrent(); rebuildDone(); }
+}
 function setLevel(l) {
-  level = l;
+  level = l; hBase = null; hVal = null;
   measuringH = level === 'ceil' && !ceilH; // Höhe noch unbekannt → zuerst messen
   navigator.vibrate?.(20); updateUI();
 }
 $('arLvFloor').onclick = () => setLevel('floor');
 $('arLvCeil').onclick = () => setLevel('ceil');
-$('arCeilMeasure').onclick = () => { measuringH = !measuringH || !ceilH; updateUI(); };
+$('arCeilMeasure').onclick = () => { measuringH = !measuringH || !ceilH; hBase = null; hVal = null; updateUI(); };
 $('arCeilUp').onclick = () => setCeilH((ceilH || 2.5) + 0.01);
 $('arCeilDown').onclick = () => setCeilH((ceilH || 2.5) - 0.01);
 function undo() {
   const last = rooms[rooms.length - 1];
-  if (mode === 'corner' && measuringH) { // Höhe messen abbrechen
+  if (mode === 'corner' && measuringH) { // Bodenpunkt zurück bzw. Höhe messen abbrechen
+    if (hBase) { hBase = null; hVal = null; updateUI(); return; }
     measuringH = false; if (!ceilH) level = 'floor';
     updateUI(); return;
   }
@@ -1097,7 +1136,8 @@ $('arExit').onclick = () => session?.end();
 async function startAR(plan) {
   rooms = []; cur = []; hit = null; nearFirst = false; doorPt = null; via = null; camPos = null; pickSel = null;
   base = plan || null; anchor = null; xf = null;
-  floorY = null; measuringH = false; hiHit = null;
+  floorY = null; measuringH = false; hBase = null; hVal = null; lost = false;
+  anchored = []; pendingAnchors = [];
   mode = base && planDoors(base).length ? 'anchorPick' : 'corner';
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -1123,7 +1163,7 @@ async function startAR(plan) {
   try {
     session = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay'],
+      optionalFeatures: ['dom-overlay', 'anchors'],
       domOverlay: { root: $('ar') },
     });
   } catch (e) {
@@ -1149,10 +1189,11 @@ function onFrame(t, frame) {
   if (!frame) return;
   const ref = renderer.xr.getReferenceSpace();
   const vp = frame.getViewerPose(ref);
+  lost = !vp || !!vp.emulatedPosition; // keine echte Ortung → keine Punkte setzen
   if (vp) camPos = vp.transform.position;
-  const results = hitSource ? frame.getHitTestResults(hitSource) : [];
+  updateAnchors(frame, ref);
+  const results = hitSource && !lost ? frame.getHitTestResults(hitSource) : [];
   let fh = null;
-  hiHit = null;
   for (const r of results) {
     const pose = r.getPose(ref);
     if (!pose) continue;
@@ -1160,24 +1201,39 @@ function onFrame(t, frame) {
     const p = new THREE.Vector3().setFromMatrixPosition(tmpM);
     if (!fh) { fh = p; reticle.matrix.copy(tmpM); }
     if (tmpM.elements[5] > 0.9 && (floorY === null || p.y < floorY)) floorY = p.y; // nach oben zeigende Fläche, tiefste = Boden
-    if (!hiHit && floorY !== null && p.y > floorY + 1.5) hiHit = p; // Decke oder Wand knapp unter der Decke
   }
   const ceilMode = mode === 'corner' && level === 'ceil';
   const lift = ceilMode && ceilH && floorY !== null ? ceilH : 0;
-  hit = null;
-  let rv = false;
-  if (ceilMode) {
-    if (measuringH) {
-      if (hiHit) { reticle.matrix.makeTranslation(hiHit.x, hiHit.y, hiHit.z); rv = true; }
-    } else if (lift && vp) {
-      // Blickstrahl (Bildmitte) mit der Deckenebene schneiden, Punkt senkrecht auf den Boden loten
-      const o = vp.transform.position, q = vp.transform.orientation;
-      tmpD.set(0, 0, -1).applyQuaternion(tmpQ.set(q.x, q.y, q.z, q.w));
+  hit = null; hVal = null;
+  let rv = false, hTop = null;
+  const dir = () => { const q = vp.transform.orientation; return tmpD.set(0, 0, -1).applyQuaternion(tmpQ.set(q.x, q.y, q.z, q.w)); };
+  if (lost) { /* nichts setzen */ }
+  else if (ceilMode && measuringH) {
+    if (!hBase) { if (fh) { hit = fh; rv = true; } }
+    else if (vp) {
+      // Blickstrahl dort auswerten, wo er die Senkrechte über dem Bodenpunkt kreuzt
+      const o = vp.transform.position, d = dir();
+      const h2 = d.x * d.x + d.z * d.z;
+      const k = h2 > 1e-4 ? ((hBase.x - o.x) * d.x + (hBase.z - o.z) * d.z) / h2 : -1;
+      if (k > 0) {
+        const y = o.y + d.y * k, hv = y - hBase.y;
+        if (hv > 1.5 && hv < 6) { hVal = hv; hTop = new THREE.Vector3(hBase.x, y, hBase.z); reticle.matrix.makeTranslation(hTop.x, y, hTop.z); rv = true; }
+      }
+    }
+  } else if (ceilMode) {
+    if (lift && vp) {
       const cy = floorY + ceilH;
-      const k = tmpD.y > 0.05 ? (cy - o.y) / tmpD.y : -1;
-      if (k > 0 && k < 20) {
-        hit = new THREE.Vector3(o.x + tmpD.x * k, floorY, o.z + tmpD.z * k);
-        reticle.matrix.makeTranslation(hit.x, cy, hit.z); rv = true;
+      if (fh && fh.y > floorY + 1.2 && fh.y < cy + 0.2) {
+        // echter Treffer an Wand/Decke in der Ecke: Lage direkt übernehmen, Höhe egal
+        hit = new THREE.Vector3(fh.x, floorY, fh.z); rv = true;
+      } else {
+        // sonst Blickstrahl (Bildmitte) mit der Deckenebene schneiden, Punkt senkrecht auf den Boden loten
+        const o = vp.transform.position, d = dir();
+        const k = d.y > 0.05 ? (cy - o.y) / d.y : -1;
+        if (k > 0 && k < 20) {
+          hit = new THREE.Vector3(o.x + d.x * k, floorY, o.z + d.z * k);
+          reticle.matrix.makeTranslation(hit.x, cy, hit.z); rv = true;
+        }
       }
     }
   } else if (fh) { hit = fh; rv = true; }
@@ -1185,15 +1241,19 @@ function onFrame(t, frame) {
   const doorish = mode === 'door' || mode === 'anchorDoor';
   reticle.visible = rv && (mode === 'corner' || doorish);
   reticle.material.color.set(nearFirst ? 0x22c55e : ceilMode ? CEIL_COLOR : mode === 'anchorDoor' ? PICK_COLOR : doorish ? DOOR_COLOR : 0xffffff);
-  const from = !hit ? null : mode === 'corner' ? cur[cur.length - 1] : doorish ? doorPt : null;
-  if (from) {
+  const from = !hit || (ceilMode && measuringH) ? null : mode === 'corner' ? cur[cur.length - 1] : doorish ? doorPt : null;
+  if (hTop) { // senkrechte Linie Bodenpunkt → Deckenkante
+    liveSeg.material.color.set(CEIL_COLOR);
+    placeSegment(liveSeg, hBase, hTop);
+    $('arLive').textContent = 'Höhe ' + fmtM(hVal);
+  } else if (from) {
     const L = (v) => lift ? new THREE.Vector3(v.x, floorY + lift, v.z) : v; // an der Decke anzeigen
     liveSeg.material.color.set(doorish ? DOOR_COLOR : ceilMode ? CEIL_COLOR : 0xfacc15);
     placeSegment(liveSeg, L(from), L(nearFirst ? cur[0] : hit));
     $('arLive').textContent = (doorish ? 'Tür ' : '') + fmtM(Math.hypot(hit.x - from.x, hit.z - from.z));
   } else {
     liveSeg.visible = false;
-    $('arLive').textContent = ceilMode && measuringH && hiHit ? 'Höhe ' + fmtM(hiHit.y - floorY) : '';
+    $('arLive').textContent = '';
   }
   curGroup.position.y = lift; // Ecken des aktuellen Raums im Deckenmodus oben zeigen
   hlGroup.visible = t % 900 < 600; // gewählte Tür blinkt
@@ -1482,7 +1542,7 @@ checkSupport();
 // Testzugang ohne Kamera (nur mit #selftest): Ablauf mit simulierten Bodentreffern prüfen
 if (location.hash === '#selftest') window.__rp = {
   alignRooms, planSVG, primary, undo, secondary, innerWalls, setLevel, setCeilH,
-  ceil: (fy, hiY) => { floorY = fy; hiHit = hiY == null ? null : new THREE.Vector3(1, hiY, 1); },
+  ceil: (fy, h) => { floorY = fy; hBase = h == null ? null : new THREE.Vector3(1, fy, 1); hVal = h ?? null; },
   lv: () => ({ level, ceilH, measuringH, floorY, btn: $('arAdd').textContent }),
   get: () => ({ rooms, mode, anchor, xf, via, pickSel, base, cur, hl: hlGroup.children.length }),
   setHit: (x, z) => { hit = new THREE.Vector3(x, 0, z); nearFirst = mode === 'corner' && cur.length >= 3 && Math.hypot(x - cur[0].x, z - cur[0].z) < CLOSE_DIST; },
